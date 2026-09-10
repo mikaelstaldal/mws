@@ -39,8 +39,11 @@ Mobile Web Shell is not a general-purpose browser. It is a user-configured conta
 - **Configured app**: A web application entry saved by the user.
 - **Shell**: The chromeless Android screen containing a WebView.
 - **Resolved launch URL**: The URL actually opened after configuration metadata is applied. This is the effective manifest `start_url` when valid; otherwise it is the final discovery URL when available, or the configured URL.
-- **Secure context**: An HTTPS origin with a valid TLS connection, or a loopback origin using `localhost`, `127.0.0.0/8`, or `[::1]`. Redirects to other origins are evaluated independently.
+- **Secure context**: An HTTPS origin with a valid TLS connection, or the loopback origin `http://localhost` (including `localhost.` after canonicalization). Redirects to other origins are evaluated independently.
 - **App scope**: The effective manifest scope, including the Web Manifest default-scope algorithm when no explicit valid `scope` is present. If no usable manifest applies, it is the resolved launch URL's origin.
+- **User-initiated / explicit user action**: A navigation or operation directly caused by a trusted WebView user gesture as reported by the provider, with no app-defined grace period that would allow later script-generated actions to inherit that status.
+- **Allowed HTTP(S) URL**: A syntactically valid, userinfo-free HTTPS URL, or a plain HTTP URL whose host passes the exact loopback classification in section 9.
+- **Credential-like URL parameter**: A case-insensitive query or fragment key equal to `access_token`, `auth`, `authorization`, `code`, `credential`, `jwt`, `key`, `password`, `secret`, `session`, `sessionid`, `sig`, `signature`, `ticket`, or `token`, or beginning/ending with one of those words separated by `_`, `-`, or `.`. This heuristic is used only for warnings and never as proof that a URL is safe.
 
 ## 5. Core user experience
 
@@ -69,7 +72,7 @@ Canonical order is a stable total order: no two records share a position and per
 The screen contains:
 
 - **Name**: required before saving, but may initially be populated from discovered metadata.
-- **URL**: required; accepts HTTPS, plus HTTP only for a loopback/localhost origin. If the user omits a scheme, the app prepends `https://`. A non-localhost HTTP URL fails inline validation and cannot be saved.
+- **URL**: required; accepts HTTPS, plus HTTP only for exact `localhost` (or `localhost.` after canonicalization). If the user omits a scheme, the app prepends `https://`. Any other HTTP URL fails inline validation and cannot be saved.
 - **Username**: optional.
 - **Password**: optional, masked by default, with a temporary reveal control.
 - **Login method**:
@@ -108,6 +111,10 @@ The Name field tracks whether its current value is discovered or user-edited. Re
 
 A discovery failure does not prevent saving if the URL itself is valid. The UI reports the failure and uses available fallbacks. Network discovery has a finite timeout and can be cancelled by leaving the screen.
 
+If discovery has never succeeded, `finalUrl` is null, `launchUrl` is the normalized configured URL, and `scope` is that URL's origin. A later successful discovery replaces all three derived values atomically. If a refresh fails for an existing entry, the failed attempt is shown but the last successful derived metadata remains until the user saves a changed configured URL; saving a changed URL without successful discovery stores the preceding fallback values and discards metadata derived from the old URL.
+
+Default discovery limits are: 15 seconds for the initial document, 10 seconds per manifest or icon resource, 30 seconds overall, 10 redirects per resource chain, 1 MiB decoded manifest text, 5 MiB encoded icon input, and 20 MiB aggregate response bodies per attempt. Limits are measured after content decoding except where explicitly called encoded, are configurable only at build time, and produce a non-fatal discovery warning followed by the normal fallback chain.
+
 Each discovery attempt has a unique, non-reused disposable profile ID and generation token. Starting another attempt or leaving the screen closes its WebView and invalidates pending callbacks; stale results are ignored. Profile deletion begins only after the WebView is closed. On startup, the app removes orphaned disposable discovery profiles left by process termination. Concurrent attempts never share a profile.
 
 ## 6. Web app shell
@@ -119,6 +126,7 @@ Each discovery attempt has a unique, non-reused disposable profile ID and genera
 - Web content fills the usable application window.
 - Content may draw beneath the status bar only if contrast and insets are handled correctly. It must not be obscured by either the Android status bar or the bottom system navigation bar/gesture area.
 - The shell follows the manifest's supported `display` and color hints where practical. `fullscreen` may hide the status bar, but must never hide or cover the bottom system navigation area. The user must always retain a system escape/navigation affordance.
+- Manifest display mapping is exact: `fullscreen` requests status-bar hiding subject to the preceding safety rule; `standalone`, `minimal-ui`, `browser`, and unknown/unsupported values all use the same chromeless shell with normal system bars. The shell never adds browser controls for `minimal-ui` or `browser`. Display does not change orientation or Android task behavior.
 - The WebView uses the device's installed Android System WebView implementation and receives its behavior/security updates.
 
 ### 6.2 Navigation
@@ -143,7 +151,8 @@ Each discovery attempt has a unique, non-reused disposable profile ID and genera
 - TLS errors are never bypassed. Show a local error screen with Retry and Close.
 - TLS, network, and main-frame loading failures show a local error screen with Retry and Close and must not reveal stored credentials. HTTP response status pages, including 4xx and 5xx responses, remain site content and render normally unless WebView reports a transport-level failure.
 - Renderer crashes show a recoverable error and allow reloading the WebView.
-- Ordinary activity recreation retains the live WebView through a lifecycle-aware holder where practical instead of serializing page/form state. The app does not persist a WebView state bundle that may contain filled credentials or page form values. After process death it recreates the WebView and reloads the last non-sensitive committed URL under normal navigation and credential rules.
+- Renderer-crash recovery disposes the crashed WebView and creates a new WebView attached to the same active profile. Retry loads the last eligible committed URL held in memory, or the resolved launch URL if none exists. A concurrent `CLEARING` or `DELETING` transition takes precedence: recovery is cancelled, the WebView is closed, and profile maintenance continues.
+- Ordinary activity recreation retains the live WebView through a lifecycle-aware holder where practical instead of serializing page/form state. The app does not persist a WebView state bundle that may contain filled credentials or page form values. After process death it recreates the WebView and reloads the resolved launch URL under normal navigation and credential rules. Arbitrary committed navigation URLs are retained only in memory for renderer recovery and are never persisted for restoration.
 
 ### 6.4 Web capabilities
 
@@ -151,8 +160,8 @@ Each discovery attempt has a unique, non-reused disposable profile ID and genera
 - Third-party cookies are disabled by default for every configured app. They are enabled only for an app whose user has explicitly enabled **Allow third-party cookies** and acknowledged its privacy warning.
 - Changing the setting affects future requests in that app's isolated profile. Disabling it prevents future third-party-cookie access but does not implicitly delete cookies already stored; the edit screen explains that **Clear cookies and site data** must be used to remove existing data.
 - Enabling third-party cookies never makes cookies or any other web data visible to another configured app, even when both entries use the same URL or embedded third-party origins.
-- Geolocation, camera, microphone, notifications, and file selection use Android runtime permission flows and an origin-specific confirmation. Denial must not crash or hang the shell.
-- Origin decisions for geolocation and notifications may be remembered in the configured app's profile until cleared; camera, microphone, and file-selection approval is requested for each use. Android app-level permissions remain controlled by the operating system. Clearing the WebView profile removes remembered site-level grants but does not claim to revoke Android app-level permissions; the edit screen explains this distinction.
+- Version 1 supports geolocation, camera, microphone, and file selection. Web notifications and client-certificate selection are unsupported and their requests are denied without hanging the shell. Geolocation, camera, and microphone require an exact-origin native confirmation; any applicable Android runtime permission is requested only after site-level consent. File selection uses the Android document chooser rather than a runtime permission and requires a user gesture for each invocation.
+- A geolocation origin decision may be remembered in the configured app's profile until cleared; camera, microphone, and file-selection approval is requested for each use. Android app-level permissions remain controlled by the operating system. Clearing the WebView profile removes remembered site-level grants but does not claim to revoke Android app-level permissions; the edit screen explains this distinction.
 - Mixed active content is blocked. HTTPS pages must not load executable HTTP subresources.
 - Safe Browsing is enabled when supported.
 - WebView debugging is disabled in production builds.
@@ -181,7 +190,7 @@ The isolated profile includes, at minimum:
 
 Isolation requirements:
 
-- Each configured app's stable ID maps to exactly one private WebView profile and private storage namespace. URLs or origins are never used as the isolation key.
+- Each configured app's stable ID and current profile generation map to exactly one active private WebView profile and private storage namespace. Retired generations are never reused. URLs or origins are never used as the isolation key.
 - Separate entries for the same site remain isolated and may be signed in to different accounts.
 - A profile persists across launches of its configured app so the app can retain its own login sessions and offline data.
 - No `CookieManager`, storage manager, cache, service-worker controller, HTTP-auth store, or similar mutable WebView facility may be treated as globally shared across configured apps.
@@ -191,9 +200,11 @@ Isolation requirements:
 - Android application sandboxing provides separation from other applications and browsers; Mobile Web Shell must additionally enforce separation among its own configured apps.
 - If the installed Android System WebView cannot provide the required independent profile/storage mechanism, Mobile Web Shell must refuse to launch web apps and show an actionable compatibility error. It must never silently fall back to a shared profile.
 
-The implementation requires AndroidX WebKit `WebViewFeature.MULTI_PROFILE`, assigns each WebView with `WebViewCompat.setProfile`, and manages profiles through `ProfileStore`. Android 8 remains the minimum install/configuration version, but shell launch and WebView-backed discovery are available only when the installed provider reports `MULTI_PROFILE`; otherwise the app shows the provider/version and actionable instructions to install or update a compatible System WebView. It never uses the default profile as a fallback. The selected mechanism must isolate the complete browsing profile rather than merely filtering cookies in application code.
+The implementation requires stable AndroidX WebKit 1.9.0 or newer, `WebViewFeature.MULTI_PROFILE`, `WebViewCompat.setProfile`, and `ProfileStore`. Release builds pin the exact AndroidX WebKit dependency and carry a minimum provider-version constant established by the compatibility suite; the initial release must not ship until that constant and its tested provider matrix are recorded in the implementation documentation. Android 8 remains the minimum install/configuration version, but shell launch and WebView-backed discovery are available only when the installed provider both reports `MULTI_PROFILE` and meets the release's tested minimum. Otherwise the app shows the provider/version and actionable update instructions. If capability disappears or the provider is downgraded after configuration, all profile access, discovery, clear, and removal work is blocked without modifying stored data until compatibility returns. The default profile is never a fallback.
 
-Profile lifecycle is durable state: `ACTIVE`, `CLEARING`, or `DELETING`. Before clear or removal, the record enters the corresponding state transactionally, all launches are blocked, and all living WebViews for that profile are closed. The app then requests `ProfileStore.deleteProfile`. Because deletion may finish asynchronously, success means the provider accepted deletion and the old profile is no longer usable by the app, not that every disk block is synchronously erased. Clear returns the record to `ACTIVE`; its next launch creates a fresh profile. Removal deletes native data only after the profile deletion request is accepted. Process restart resumes any non-active operation idempotently. Failure leaves launches blocked and offers Retry; widgets show a temporary “App data maintenance” state for clearing and “App unavailable” for deletion. The same configured app has at most one live shell activity, and a new launch brings that activity forward.
+Profile lifecycle is durable state: `ACTIVE`, `CLEARING`, or `DELETING`, and each app record stores a monotonically increasing profile generation. Before clear or removal, the record enters the corresponding state transactionally, all launches are blocked, and all living WebViews and in-memory `Profile` references for the old generation are closed and released. The app then calls `ProfileStore.deleteProfile` for that generation. A `true` result accepts deletion; `false` is idempotent success because the named profile does not exist. Either result retires that profile name permanently; it is never reused. Clear increments the generation and returns the record to `ACTIVE`, so its next launch creates a uniquely named fresh profile. Removal deletes native data only after deletion acceptance/confirmed absence. Process restart resumes any non-active operation idempotently. Failure leaves launches blocked and offers Retry. A failed removal remains as a disabled “Pending removal” row in the main list and editor; its native configuration, encrypted credentials, and icon remain until retry succeeds, and removal cannot be cancelled after profile deletion has begun. Widgets show “App data maintenance” for clearing and “App unavailable” for deletion. The same configured app has at most one live shell activity, and a new launch brings that activity forward.
+
+The normative deletion guarantee is the `ProfileStore` contract: after accepted deletion the old `Profile` object/name is unusable by the application, and a new generation begins with no provider-visible profile state. Tests directly verify every data category for which the pinned provider exposes an observable API or controlled behavioral probe. Categories that the provider documents as profile-owned but does not expose for observation are covered by provider conformance certification and deletion API success, not by claims of synchronous physical erasure.
 
 ## 7. Web Application Manifest and icons
 
@@ -214,6 +225,8 @@ If a document contains multiple eligible manifest links, the first one in docume
 
 Manifest processing uses the final document URL as the document URL and the fetched manifest URL as the manifest URL. Relative manifest members are resolved against the manifest URL. The effective `start_url` is resolved and validated using the Web Manifest algorithm, must be same-origin with the document, and has its fragment ignored for scope matching. If it is absent or invalid, the final document URL is used. A valid explicit `scope` is resolved and applied according to the Web Manifest algorithm; an absent or invalid explicit scope uses the algorithm's default scope derived from the effective start URL. If no usable manifest applies, scope is the resolved launch URL's origin. The launch URL must be within the effective scope or falls back to the final document URL, then the configured URL.
 
+Manifest discovery follows the current W3C Web Application Manifest processing model implemented by the selected WebView baseline. The document DOM is the authoritative source of eligible manifest links and their document order, resolved base URL, `media`, `type`, and `crossorigin` attributes. The manifest request uses CORS mode; credentials mode is `include` only for `crossorigin="use-credentials"` and is otherwise `same-origin`. Redirects are limited and each destination is re-evaluated under section 9. The final response URL is the manifest URL used to resolve relative members. Referrer policy follows the document/link policy, and Content Security Policy is honored by a WebView-executed fetch. A native client may be used only if it reproduces these observable rules and uses the same disposable discovery profile's cookie state; it must not use the runtime profile or a global cookie store.
+
 Manifest metadata is snapshotted into local storage. It is refreshed only when the user edits/refreshed the entry or when a future background-refresh feature is introduced.
 
 ### 7.2 Icon selection and storage
@@ -225,6 +238,8 @@ Manifest metadata is snapshotted into local storage. It is refreshed only when t
 - Icons are stored in private application storage and referenced by the configured app's stable ID.
 - Widget icons must be rendered from local storage and must not require network access during widget rendering.
 
+Icon selection is deterministic. Supported inputs are PNG, WebP, JPEG, ICO, and non-scripted SVG. A resource is rejected above 5 MiB encoded, 16 million decoded pixels, or 4096 pixels on either raster dimension. SVG is rendered with external resources, scripts, animation, and network access disabled. The app produces 48, 72, 96, 144, 192, 288, and 512 px square renditions, preserving transparency and center-fitting non-square artwork without cropping. For adaptive presentation it first considers icons declaring `maskable`, then `any`; monochrome-only candidates are not selected. Within a purpose class, candidates are ordered by: exact declared square size at or above 512 px; smallest square size above 512 px; largest square size below 512 px; `any`; then source document order. SVG `any` counts as scalable and precedes raster sizes within the same purpose class. A candidate whose decoded dimensions contradict its declaration is ranked by decoded dimensions. Fetch or decode failure advances to the next candidate. Linked page icons use the same size ordering, followed by `/favicon.ico`.
+
 ## 8. Authentication
 
 ### 8.1 General rules
@@ -234,6 +249,7 @@ Manifest metadata is snapshotted into local storage. It is refreshed only when t
 - Credentials must never be injected into an HTTP page, a page with a TLS error, a non-loopback cleartext redirect, or a different origin from the credential origin.
 - The initial credential origin is the origin of the final secure URL observed during configuration. If that cannot be established, credentials remain stored but disabled until a secure origin is confirmed.
 - When discovery redirects across origins, the UI shows the resulting credential origin and requires explicit confirmation before enabling credentials for it. If credentials were saved while discovery could not establish a secure final origin, the first successful eligible top-level commit proposes that exact origin for explicit user confirmation; credentials remain disabled until confirmed. Changing the configured URL clears the binding and requires confirmation again.
+- Credential binding has explicit persisted states: `UNBOUND`, `PENDING_CONFIRMATION`, and `CONFIRMED`. `proposedCredentialOrigin` is present only while pending; `credentialOrigin` is present only when confirmed. Save is allowed in any state, but credentials can be used only in `CONFIRMED`. A same-origin successful discovery may be confirmed inline on Save; a cross-origin result requires a separate confirmation naming both origins. A first eligible runtime commit after failed discovery sets a pending proposal and opens the same confirmation UI. Rejecting a proposal returns to `UNBOUND`. Changing the configured URL atomically clears both origins and returns to `UNBOUND`.
 - Any cross-origin authentication use requires a separate, explicit configuration; a redirect alone never expands credential scope.
 - Logs, analytics, crash reports, UI error messages, backups, and saved WebView state must not contain plaintext credentials or Authorization headers.
 
@@ -241,10 +257,9 @@ Manifest metadata is snapshotted into local storage. It is refreshed only when t
 
 Reactive mode:
 
-- On a WebView HTTP authentication challenge, supply the configured username and password only when the challenged host and port match the stored credential origin and the current connection is secure.
+- Supply credentials only for a Basic challenge correlated to the pending top-level navigation to the exact confirmed credential origin. The pending navigation's canonical HTTPS scheme, host, and effective port are recorded before loading; the callback host must match it, and the challenged realm is recorded only for retry suppression, not for expanding credential scope. Subresource and iframe challenges are cancelled. If the pinned provider cannot prove that a callback belongs to that top-level navigation and effective port, Basic authentication is disabled for that provider and the challenge is cancelled.
 - Do not persist credentials in WebView's global HTTP-auth database.
-- Cancel the challenge when the context is ineligible or repeated authentication has failed, and show a non-sensitive error.
-- Prevent an infinite retry loop after rejected credentials.
+- Cancel the challenge when the context is ineligible. Supply credentials at most once for the tuple of committed-document generation, origin, and realm; a repeated challenge for that tuple is treated as rejection, cancelled, and shown as a non-sensitive error.
 
 Mobile Web Shell does not send Basic credentials proactively. WebView top-level custom-header propagation across redirects cannot provide the required cross-origin non-disclosure guarantee; only eligible reactive challenges are supported.
 
@@ -263,6 +278,10 @@ Form login is best-effort and operates as follows:
 - Attempt at most once per committed document unless the user explicitly reloads.
 - Do not expose credentials to page-visible logs, Android JavaScript interfaces, or URL query parameters.
 
+After a top-level commit, a narrowly scoped form-fill helper observes that document through DOM readiness and subsequent mutations for at most 10 seconds. It fills immediately when exactly one eligible candidate becomes unambiguous, then disconnects. If none does, it disconnects and the clipboard fallback may be offered. A reload or new committed document starts a new bounded observation; no persistent native Retry control is added.
+
+Credential values are delivered through a temporary AndroidX WebKit WebMessage channel restricted to the exact confirmed origin and the current top-level document. The channel name and per-document capability are random and non-reused; it is installed only after an eligible secure commit, accepts no page-to-native commands or credential requests, and is removed when filling completes, times out, navigates, errors, or the WebView closes. Native code sends the values as message data rather than concatenating them into executable JavaScript source. The bootstrap script contains only fixed code and the random capability, validates one message, writes only the already-selected fields, clears its references, and tears itself down. Provider versions unable to enforce the allowed-origin and document-lifetime restrictions do not support form filling and use the eligible clipboard fallback instead.
+
 Automatic login method first responds to an eligible HTTP Basic challenge; otherwise it attempts conservative form filling.
 
 Login methods are mutually constraining: Form only never supplies Basic credentials; HTTP Basic only never fills forms or offers clipboard assistance; Automatic may use eligible reactive Basic, form filling, and clipboard assistance as specified.
@@ -278,7 +297,7 @@ When both username and password are configured, no HTTP authentication challenge
 - Before the first password copy, the UI warns that clipboard contents may be visible to the operating system, keyboards, accessibility services, or other software depending on the Android version. The user may cancel.
 - Clipboard entries use a generic, non-secret label and are marked as sensitive using the Android clipboard sensitivity metadata where supported, preventing sensitive previews where the platform honors it.
 - After a successful copy, show a brief confirmation that does not display the copied value.
-- Mobile Web Shell clears a copied credential immediately when it observes the shell leaving the foreground or the user returning from pasting. It also makes a best-effort attempt after 60 seconds while its process can run. Android process suspension or termination can prevent timed clearing, so the UI does not promise clearing after process death. It clears the clipboard only if it still contains the exact item written by Mobile Web Shell, so it never deletes newer user clipboard content.
+- Clipboard clearing is best-effort because Android provides no reliable “pasted” callback to the source app. Mobile Web Shell attempts to clear its clip when the shell loses foreground, on the shell's next resume after a copy, and after 60 seconds while its process can run. Android restrictions, process suspension, or termination can prevent inspection or clearing, so the UI promises none of these attempts. Each written clip carries an app-generated opaque nonce in its metadata where supported; before clearing, the app verifies that nonce and the exact clip content. On platforms that cannot retain/read the marker, it clears only on an exact content match. It never clears a newer or different clip.
 - Dismissing the offer affects only the current committed document. The helper may be offered again following a new navigation or explicit reload if autofill still fails.
 - Clipboard fallback is unavailable for configurations set to **HTTP Basic only**, because those credentials are not intended for an HTML form.
 - Clipboard contents are not part of the configured app's isolated WebView profile and must never be injected into page script, logs, analytics, saved state, or crash reports.
@@ -294,14 +313,14 @@ When both username and password are configured, no HTTP authentication challenge
 
 ## 9. Network and transport security
 
-- Cleartext network traffic is disabled at the Android network-security-config level, except explicit loopback access needed for `http://localhost`, `http://127.0.0.1`, and `http://[::1]` where platform configuration permits it.
-- URL security classification uses one standards-based parser. Userinfo is rejected. Scheme and host are canonicalized and default ports are normalized before origin comparison. Plain HTTP is allowed only for exact `localhost` (and `localhost.` after removing one terminal dot), a canonical IPv4 literal in `127.0.0.0/8`, or the exact IPv6 loopback address `::1`. Localhost subdomains, alternate numeric IPv4 spellings, IPv4-mapped IPv6 addresses, lookalike names, and DNS aliases are not treated as loopback.
+- Cleartext network traffic is disabled at the Android network-security-config level except for an explicit, non-subdomain `localhost` rule. The canonical `localhost.` spelling maps to that same rule after removal of one terminal dot.
+- URL security classification uses one standards-based parser. Userinfo is rejected. Scheme and host are canonicalized and default ports are normalized before origin comparison. Plain HTTP is allowed only for exact `localhost` (and `localhost.` after removing one terminal dot). Localhost subdomains, all IPv4 and IPv6 literals, alternate numeric spellings, lookalike names, and DNS aliases are not treated as permitted loopback.
 - A non-localhost plain HTTP URL must not be saved, loaded in a WebView, followed as a redirect, fetched for manifest/icon discovery, or delegated to an external application. There is no user override. The app shows that HTTPS is required.
-- Android Network Security Config is the fail-closed enforcement layer for disallowed cleartext traffic. WebView navigation callbacks provide early cancellation and user-facing errors but are not the sole enforcement mechanism. Tests verify that prohibited requests transmit no network data, including redirects and POST form submissions.
+- Android Network Security Config is the fail-closed enforcement layer for disallowed cleartext traffic. WebView navigation callbacks provide early cancellation and user-facing errors but are not the sole enforcement mechanism. The release's provider matrix records, for direct links, redirects, GET/POST form submissions, pop-ups, and external intents, whether the pinned provider plus network configuration can guarantee rejection before payload transmission. A flow that cannot meet that guarantee is disabled for the affected provider rather than treated as best-effort. Tests verify every enabled flow and confirm that prohibited requests transmit no request bytes.
 - HTTPS-to-HTTP downgrade redirects are blocked, except when the resulting HTTP URL is a permitted loopback/localhost origin. A blocked redirect never inherits credentials, headers, referrer secrets, or POST data into a subsequent request.
 - Certificate errors, hostname mismatches, expired certificates, and untrusted certificate chains cannot be overridden by the user.
 - Metadata and icon fetching follows the same transport restrictions as shell navigation.
-- Apply reasonable connection, response-size, redirect-count, image-size, and manifest-size limits.
+- Apply the concrete discovery limits in section 5.3. Shell main-frame navigation uses a 30-second initial-load error timeout but does not impose an application-level response-size limit; provider/network limits still apply.
 - Release builds must contain no permissive WebView SSL callbacks.
 
 ## 10. Android widgets
@@ -314,7 +333,7 @@ When both username and password are configured, no HTTP authentication challenge
 - Tapping a row launches that configured app directly into its shell.
 - Tapping the widget header or empty state opens the Mobile Web Shell main screen.
 - The widget updates after add, edit, remove, icon refresh, device reboot, app upgrade, and relevant launcher resize events.
-- Widget configuration allows the user to select which apps appear. Selected apps always appear in their relative canonical main-screen order; widgets do not maintain an independent ordering. The default selection is all apps.
+- Widget configuration allows the user to select which apps appear. Selected apps always appear in their relative canonical main-screen order; widgets do not maintain an independent ordering. The default is a persisted live **All apps** mode, in which apps added later appear automatically. If the user selects or deselects individual apps, the widget switches to a fixed selected-ID subset and later additions are not selected automatically.
 - Saving a new main-screen order immediately requests an update of every multi-app widget instance. Each widget preserves its app selection while reflecting the new relative order.
 
 ### 10.2 Single-app launcher widget
@@ -341,11 +360,13 @@ Each configured app has at least:
 | `launchUrl` | Valid manifest start URL or fallback URL |
 | `scope` | Valid manifest scope or origin fallback |
 | `credentialOrigin` | Exact eligible origin for authentication |
+| `credentialBindingState` | `UNBOUND`, `PENDING_CONFIRMATION`, or `CONFIRMED` |
+| `proposedCredentialOrigin` | Exact eligible origin awaiting confirmation, otherwise null |
 | `loginMethod` | Automatic, Basic only, or form only |
 | `allowThirdPartyCookies` | Per-app boolean, default false |
 | `profileState` | Durable `ACTIVE`, `CLEARING`, or `DELETING` lifecycle state |
-| `encryptedUsername` | Optional encrypted value |
-| `encryptedPassword` | Optional encrypted value |
+| `profileGeneration` | Monotonically increasing generation used in the private profile name |
+| `credentialReference` | Optional opaque reference/presence marker for a secret record outside this database |
 | `manifestSnapshot` | Sanitized supported manifest metadata |
 | `iconReference` | Private local icon asset reference |
 | `themeColor` | Optional validated color |
@@ -355,7 +376,9 @@ Each configured app has at least:
 
 Passwords, Authorization headers, cookie contents, and arbitrary page HTML are not part of the ordinary configuration database.
 
-Each configured-app record is associated with a stable, private WebView profile identifier derived from or mapped to its opaque app ID. Profile identifiers must not expose credentials or URLs. Profile data is stored separately from the ordinary configuration database and is managed as an indivisible per-app lifecycle resource.
+The separate backup-excluded credential store contains records keyed by the opaque credential reference with the configured-app ID association, encrypted username and password ciphertexts, nonces/IVs, authentication tags where separate, and encryption-format/key versions. It is never joined into backup-eligible configuration exports.
+
+Each configured-app record and profile generation map to a private WebView profile identifier derived from the opaque app ID plus generation. Profile identifiers must not expose credentials or URLs, and retired identifiers are never reused. Profile data is stored separately from the ordinary configuration database and is managed as an indivisible per-app lifecycle resource.
 
 ## 12. Architecture constraints
 
@@ -411,7 +434,7 @@ Each configured-app record is associated with a stable, private WebView profile 
 21. On a device whose System WebView lacks the required isolation capability, the app reports incompatibility and does not launch using a shared data store.
 22. An in-scope `target="_blank"` link opens in the existing shell, while an out-of-scope `target="_blank"` link opens in the system default browser without transferring credentials or isolated profile data.
 23. When an eligible secure login page receives no HTTP-auth challenge and automatic form filling fails, the user is offered separate actions to copy the configured username or password; no credential is copied without an explicit action.
-24. A copied credential is marked sensitive where supported, is cleared when an observed foreground/paste lifecycle event requires it, and is subject to a best-effort 60-second clear while the process can run, provided the clipboard item has not since been replaced by the user or another application.
+24. A copied credential is marked sensitive where supported and receives best-effort clear attempts on foreground loss, the next shell resume, and after 60 seconds while the process can run, provided the clipboard item has not since been replaced.
 25. Manual credential assistance is never offered, and credentials are never copied by Mobile Web Shell, for an insecure or mismatched origin, a TLS-error page, a subframe, or an HTTP-Basic-only configuration.
 26. A non-localhost plain HTTP URL cannot be saved, loaded, fetched during discovery, reached through a redirect or form submission, or delegated to the system browser; an HTTPS-required error is shown instead.
 27. An out-of-scope HTTPS link without `target="_blank"` or another new-window request navigates within the existing shell WebView and does not expand the configured credential origin.
@@ -425,9 +448,9 @@ Each configured-app record is associated with a stable, private WebView profile 
 ## 16. Required test coverage
 
 - Unit tests for URL normalization, secure-context classification, origin matching, manifest resolution, scope checks, icon selection, and login-form candidate scoring.
-- URL tests cover userinfo rejection, default-port normalization, `localhost` and its trailing-dot form, localhost subdomains, canonical IPv4 in 127/8, alternate numeric IPv4 spellings, exact IPv6 loopback, IPv4-mapped IPv6, and lookalike hosts.
+- URL tests cover userinfo rejection, default-port normalization, permitted `localhost` and its trailing-dot form, and rejection of localhost subdomains, canonical IPv4 in 127/8, alternate numeric IPv4 spellings, IPv6 loopback, IPv4-mapped IPv6, lookalike hosts, and DNS aliases.
 - Instrumented WebView tests using controlled HTTPS and loopback servers for navigation history, Basic challenges, redirects, form fill boundaries, TLS failures, and mixed content.
-- Transport-policy tests covering rejected non-localhost HTTP configuration, links, redirects, form submissions, manifests, icons, pop-ups, and external intents, plus permitted loopback HTTP variants.
+- Transport-policy tests cover permitted exact-localhost HTTP and rejected HTTP configuration, links, redirects, form submissions, manifests, icons, pop-ups, and external intents for every other host form.
 - Navigation tests for ordinary out-of-scope HTTPS links remaining in the shell; in-scope and out-of-scope `target="_blank"` links; equivalent `window.open()` requests triggered by a user gesture; missing browser handlers; and absence of credential/header transfer to browser intents.
 - Tests proving credentials are not used on cross-origin redirects, insecure pages, subframes, ambiguous forms, or after configuration removal.
 - Clipboard-fallback tests covering the offer conditions, separate username/password actions, explicit consent, sensitive metadata, redacted confirmation, timed/background clearing, preservation of newer clipboard content, dismissal, and all ineligible security contexts.
