@@ -291,6 +291,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 - Manifest: `<uses-permission android:name="nu.staldal.mypass.permission.FETCH_PASSWORD"/>` and `<queries><package android:name="nu.staldal.mypass"/></queries>`.
 - Request: `Intent("nu.staldal.mypass.action.FETCH_PASSWORD").setPackage("nu.staldal.mypass")`, with extras `URL` (and `REALM` for Basic). Check `resolveActivity` first. Catch `ActivityNotFoundException` and `SecurityException` as unavailability.
 - Each request is bound to a random request identity plus the current WebView, navigation and document identity. Only these non-secret identities may survive lifecycle recreation. There is one outstanding request per flow, with a 60 s timeout.
+- The Activity Result registry uses a distinct key for each request. After timeout or cancellation, its callback remains registered to drain a late result without retaining the returned `Intent` in registry saved state. On recreation, only outstanding request keys are restored and registered as discard callbacks before the activity starts. An orphaned result is discarded; the flow must request again under a new identity.
 - Credential values are held in memory only and cleared on completion, failure, cancellation, navigation, close or timeout.
 
 ## 11. Basic-auth navigation gate

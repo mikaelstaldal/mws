@@ -32,6 +32,13 @@ val localProperties = Properties().apply {
 fun signingProperty(key: String, env: String): String? =
     (localProperties.getProperty(key) ?: System.getenv(env))?.takeIf { it.isNotBlank() }
 
+val releaseStore = signingProperty("releaseKeystore", "RELEASE_KEYSTORE")?.let(::file)
+val releaseStorePassword = signingProperty("releaseKeystorePassword", "RELEASE_KEYSTORE_PASSWORD")
+val releaseAlias = signingProperty("releaseKeyAlias", "RELEASE_KEY_ALIAS")
+val releaseKeyPassword = signingProperty("releaseKeyPassword", "RELEASE_KEY_PASSWORD")
+val releaseSigningReady = releaseStore?.exists() == true && releaseStorePassword != null &&
+    releaseAlias != null && releaseKeyPassword != null
+
 android {
     namespace = "nu.staldal.mws"
     compileSdk = 36
@@ -60,6 +67,19 @@ android {
                 )
             }
         }
+        // Must be the same release identity used by MyPass. Without it, the
+        // release artifact is unsigned and cannot call MyPass.
+        // local.properties keys mirror the debug names with a "release" prefix;
+        // CI may use RELEASE_KEYSTORE, RELEASE_KEYSTORE_PASSWORD,
+        // RELEASE_KEY_ALIAS and RELEASE_KEY_PASSWORD.
+        create("sharedRelease") {
+            if (releaseSigningReady) {
+                storeFile = releaseStore
+                storePassword = releaseStorePassword
+                keyAlias = releaseAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
     }
 
     defaultConfig {
@@ -75,6 +95,11 @@ android {
         release {
             isMinifyEnabled = false
             isDebuggable = false
+            if (releaseSigningReady) {
+                signingConfig = signingConfigs.getByName("sharedRelease")
+            } else {
+                logger.warn("mypass: release signing key not configured; release artifact will be unsigned.")
+            }
         }
     }
 
