@@ -236,6 +236,9 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 - Candidates are fetched sequentially in rank order (R§8.2). Decoding rejects anything over 5 MiB encoded, 16 MP decoded or 4096 px per dimension.
 - The SVG renderer runs with scripts, external resources, animation, fonts and network disabled. Failures never expose source content.
 - One selected source produces renditions at 48, 72, 96, 144, 192, 288 and 512 px (PNG or WebP), plus a retained higher-resolution source rendition. Maskable sources are cropped to the 80% safe-zone circle and given a rounded-square mask.
+- `IconSelection` and `IconPipeline` take resolved candidates and fetch through `IconFetcher`; the discovery native client supplies that interface and remains responsible for transport policy, redirects, timeouts and aggregate budgets. The pipeline tries failed candidates in rank order and returns `null` for the bundled default icon.
+- SVG input is checked with Android's pull parser, rejecting DTDs, entities, processing instructions, scripts, event handlers, external references, animation, font and text content, embedded images and foreign objects before AndroidSVG renders it. Local fragment `url(#id)` references are allowed; `<use>` is rejected to avoid recursive expansion. Depth and element counts are capped. ICO supports embedded PNG and uncompressed 32-bit DIB entries.
+- `IconStore` writes a complete PNG generation under `noBackupFilesDir/icons/<app ID>/<generation>`, then publishes the generation by directory rename. Configuration stores that reference; old generations are pruned after the new reference is durable. A missing or unreadable reference renders the bundled vector default.
 
 ## 9. Shell
 

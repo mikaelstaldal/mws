@@ -1,6 +1,7 @@
 // Not java.util.Properties inline below: in the Kotlin DSL `java` is the Java plugin's extension,
 // so a fully-qualified reference to the package does not resolve.
 import java.util.Properties
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
@@ -112,6 +113,10 @@ android {
         abortOnError = true
         lintConfig = file("lint.xml")
     }
+
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 kotlin {
@@ -121,6 +126,12 @@ kotlin {
     }
 }
 
+tasks.withType<Test>().configureEach {
+    val roboHome = layout.buildDirectory.dir("robolectric-home").get().asFile
+    doFirst { roboHome.mkdirs() }
+    systemProperty("user.home", roboHome.absolutePath)
+}
+
 dependencies {
     implementation(libs.androidx.core)
     implementation(libs.androidx.appcompat)
@@ -128,8 +139,10 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
     implementation(libs.webkit)
+    implementation(libs.androidsvg)
 
     testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
     androidTestImplementation(libs.test.runner)
     androidTestImplementation(libs.test.ext.junit)
     androidTestImplementation(libs.okhttp.mockwebserver)
