@@ -1,0 +1,143 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "91216a131b0b1b8bc5a3017fa8dbddba",
+    "entities": [
+      {
+        "tableName": "configured_apps",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `nameSource` TEXT NOT NULL, `configuredUrl` TEXT NOT NULL, `finalUrl` TEXT, `launchUrl` TEXT NOT NULL, `scope` TEXT NOT NULL, `allowThirdPartyCookies` INTEGER NOT NULL, `profileState` TEXT NOT NULL, `profileGeneration` INTEGER NOT NULL, `retiringProfileGeneration` INTEGER, `manifestSnapshot` TEXT, `iconReference` TEXT, `themeColor` INTEGER, `backgroundColor` INTEGER, `sortPosition` INTEGER NOT NULL, `sensitiveUrlConsent` TEXT, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nameSource",
+            "columnName": "nameSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configuredUrl",
+            "columnName": "configuredUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finalUrl",
+            "columnName": "finalUrl",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "launchUrl",
+            "columnName": "launchUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scope",
+            "columnName": "scope",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "allowThirdPartyCookies",
+            "columnName": "allowThirdPartyCookies",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileState",
+            "columnName": "profileState",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "profileGeneration",
+            "columnName": "profileGeneration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "retiringProfileGeneration",
+            "columnName": "retiringProfileGeneration",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "manifestSnapshot",
+            "columnName": "manifestSnapshot",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "iconReference",
+            "columnName": "iconReference",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "themeColor",
+            "columnName": "themeColor",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "backgroundColor",
+            "columnName": "backgroundColor",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sortPosition",
+            "columnName": "sortPosition",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sensitiveUrlConsent",
+            "columnName": "sensitiveUrlConsent",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_configured_apps_sortPosition",
+            "unique": false,
+            "columnNames": [
+              "sortPosition"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_configured_apps_sortPosition` ON `${TABLE_NAME}` (`sortPosition`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '91216a131b0b1b8bc5a3017fa8dbddba')"
+    ]
+  }
+}

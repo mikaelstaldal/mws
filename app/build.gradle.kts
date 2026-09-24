@@ -8,6 +8,13 @@ import java.io.File
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    alias(libs.plugins.kotlin.kapt)
+}
+
+kapt {
+    arguments {
+        arg("room.schemaLocation", "$projectDir/schemas")
+    }
 }
 
 // Signing key shared by the nu.staldal.* apps. Enabling guarding services by a signature-level permission,
@@ -182,6 +189,7 @@ android {
     }
 
     sourceSets.getByName("main").java.srcDir(providerTableDir)
+    sourceSets.getByName("androidTest").assets.srcDir("schemas")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
@@ -222,6 +230,7 @@ dependencies {
     implementation(libs.material)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
+    kapt(libs.room.compiler)
     implementation(libs.webkit)
     implementation(libs.androidsvg)
 
@@ -229,6 +238,7 @@ dependencies {
     testImplementation(libs.robolectric)
     androidTestImplementation(libs.test.runner)
     androidTestImplementation(libs.test.ext.junit)
+    androidTestImplementation(libs.room.testing)
     androidTestImplementation(libs.okhttp.mockwebserver)
     androidTestImplementation(libs.okhttp.tls)
 }
