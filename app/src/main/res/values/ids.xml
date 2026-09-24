@@ -1,0 +1,15 @@
+<resources>
+    <item name="app_list_scroll" type="id" />
+    <item name="app_rows" type="id" />
+    <item name="row_snapshot" type="id" />
+    <item name="list_error" type="id" />
+    <item name="provider_error_entry" type="id" />
+    <item name="empty_state" type="id" />
+    <item name="empty_add" type="id" />
+    <item name="add_web_app" type="id" />
+    <item name="app_icon" type="id" />
+    <item name="app_name_text" type="id" />
+    <item name="app_url_text" type="id" />
+    <item name="clearing_label" type="id" />
+    <item name="provider_error_message" type="id" />
+</resources>

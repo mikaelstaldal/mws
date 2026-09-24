@@ -1,6 +1,19 @@
 <resources>
     <string name="app_name">Mobile Web Shell</string>
     <string name="empty_state">No web apps yet</string>
+    <string name="add_web_app">Add web app</string>
+    <string name="clearing_label">Clearing site data…</string>
+    <string name="clearing_explanation">Site data is being cleared. This app can be opened when cleanup finishes.</string>
+    <string name="clearing_state">Unavailable while clearing site data</string>
+    <string name="list_error">Could not load saved apps. Restart the app to retry.</string>
+    <string name="clearing_row_description">%1$s, Clearing site data. Double tap for details. Long press to edit.</string>
+    <string name="app_row_description">%1$s, %2$s. Double tap to open. Long press to edit.</string>
+    <string name="app_icon_description">Icon for %1$s</string>
+    <string name="provider_error_entry">WebView provider incompatible. View details and update options.</string>
+    <string name="add_unavailable">The add screen is not available yet.</string>
+    <string name="editor_unavailable">The editor is not available yet.</string>
+    <string name="shell_unavailable">The web app shell is not available yet.</string>
+    <string name="unknown_action">This action is unavailable.</string>
     <string name="mypass_available">MyPass available</string>
     <string name="mypass_unavailable">MyPass unavailable; you can still save and use this app</string>
     <string name="provider_incompatible">Web apps cannot run with the current WebView provider (%1$s, version %2$s). Update this provider in your app store or Android settings, then return here. You can still configure or remove saved apps. Launching, discovery, and clearing site data are paused until compatibility is restored.</string>

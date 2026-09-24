@@ -69,6 +69,13 @@ abstract class ConfigurationDatabase : RoomDatabase() {
     abstract fun apps(): ConfiguredAppDao
 
     companion object {
+        @Volatile private var sharedInstance: ConfigurationDatabase? = null
+
+        /** One Room instance per process keeps observers current across activities and workers. */
+        fun shared(context: Context): ConfigurationDatabase = sharedInstance ?: synchronized(this) {
+            sharedInstance ?: open(context.applicationContext).also { sharedInstance = it }
+        }
+
         fun open(context: Context): ConfigurationDatabase =
             Room.databaseBuilder(context, ConfigurationDatabase::class.java, "configuration.db")
                 .setJournalMode(JournalMode.TRUNCATE)
