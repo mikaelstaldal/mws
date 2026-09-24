@@ -6,6 +6,7 @@ This document records the technical design and constraints that implement
 ## 1. Technology baseline
 
 - Native Android, Kotlin. Minimum SDK 26; target SDK is the latest stable.
+- The initial build uses one `app` module, Gradle 8.14.3, Android Gradle Plugin 8.13.2, Kotlin 2.2.21, Java 21 as the build toolchain and Java/Kotlin bytecode target, and compile/target SDK 36 (the stable API at scaffold time). Versions are pinned in `gradle/libs.versions.toml`; API 37 is still a preview.
 - AndroidX/Jetpack and Material components for native screens.
 - Room (or equivalent structured persistence) for non-secret configuration and metadata.
 - **AndroidX WebKit ≥ 1.9.0, pinned to an exact version in release builds.** Required features: `WebViewFeature.MULTI_PROFILE`, `WebViewCompat.setProfile`, `ProfileStore`, `WebViewCompat.addWebMessageListener`.
@@ -157,6 +158,7 @@ The normative guarantee is the `ProfileStore` contract: after accepted deletion 
 ### 6.3 Backup and restore
 
 - Backup-eligible: the configuration store only. Excluded: the maintenance store, icon renditions and all WebView profile data.
+- The configuration Room database is named `configuration.db` and uses `RoomDatabase.JournalMode.TRUNCATE` so the single backup-eligible file contains committed edits. The backup rules include that database file only.
 - A missing sentinel alongside a restored configuration store means first launch after restore or transfer. Normalization, resumable via the journal, creates the sentinel before exposing records. Every record becomes `ACTIVE` with `profileGeneration` greater than both restored generations, `retiringProfileGeneration` is cleared, and `iconReference` is cleared. `sortPosition` is repaired to contiguous. No deletion call is made, because no profile data was restored.
 
 ### 6.4 Resource exhaustion
@@ -336,6 +338,8 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 URL normalization (including every R§6.1 and R§10 case: userinfo, default ports, trailing dot, HTTP/`localhost`/loopback rejection, HTTPS IPv4/IPv6 canonicalization, scheme-less IP rejection, IDN, whitespace, ambiguous colon), secure-context classification, origin matching, manifest resolution, scope checks, icon selection ranking, login-form candidate scoring, credential-like parameter detection (HTTPS and each custom scheme), contrast selection, and the profile-generation state machine.
 
 ### 14.2 Instrumented tests (controlled HTTPS test servers)
+
+The instrumented test fixture uses a loopback MockWebServer with a checked-in test certificate. The matching test CA is trusted by debug builds through `debug-overrides`, allowing both WebView and the test-only OkHttp client to use HTTPS without changing release trust settings. CI runs instrumented tests on API 26 and API 36 emulators; unit tests, lint, and the security source check run in the build job.
 
 - **Navigation and transport**: history/Back, redirects, TLS failures, mixed content, and cleartext rejection for configuration, links, redirects, form submissions, manifests, icons, pop-ups and external intents, with zero request bytes transmitted.
 - **New windows**: in- and out-of-scope `target="_blank"` and gestured `window.open()`; ungestured `window.open()`; `about:blank` and undeterminable destinations; non-GET requests; the probe committing nothing and leaving no profile state; Open in browser; missing browser; no header or credential transfer.

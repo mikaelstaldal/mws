@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Mobile Web Shell</string>
+    <string name="empty_state">No web apps yet</string>
+</resources>
