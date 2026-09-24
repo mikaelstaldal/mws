@@ -105,6 +105,8 @@ At every process start, **before any profile is loaded**:
 
 Every operation spanning the configuration DB, icon files, permission store, WebView profiles or widget records uses the durable journal in the maintenance store. Each step is idempotent, records its completion before advancing, and is resumed on startup. No cross-store operation relies on in-memory transactions.
 
+The journal stores a typed intent with opaque resource identifiers and a completed-step cursor. The runner replays the first unfinished step after process death; a step therefore also tolerates replay when its external effect succeeded before its cursor update. Startup resume attempts every pending intent and reports failures for the caller to handle before exposing affected apps. A completed intent may be discarded after consumers no longer need to inspect it.
+
 ### 5.5 Deletion guarantee
 
 The normative guarantee is the `ProfileStore` contract: after accepted deletion the old name is unusable, and a new generation starts with no provider-visible state. Tests verify every data category the provider exposes an observable API or probe for. Other profile-owned categories rely on provider conformance and deletion success. Cryptographic erasure is not promised.
@@ -137,6 +139,8 @@ The normative guarantee is the `ProfileStore` contract: after accepted deletion 
 - Ordering is a stable total order with contiguous positions. Add, remove and reorder update all affected positions in one transaction. The app ID is the deterministic tie-breaker when repairing duplicate or gapped positions.
 
 ### 6.2 Maintenance store (backup-excluded)
+
+`maintenance.db` is a separate, versioned SQLite database under `noBackupFilesDir`. Its SQLite journal stays in that directory. It contains no configuration rows or credentials.
 
 - **Permission decisions**: (app ID, generation, canonical exact origin, capability = `GEOLOCATION`) is unique, with decision `SITE_ALLOW` | `SITE_DENY`. Decisions are never migrated to a new generation, and are deleted via the journal only once no live WebView can use the retiring generation.
 - **Widget records**, keyed by `appWidgetId`:
