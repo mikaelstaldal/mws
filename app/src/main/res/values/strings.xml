@@ -3,4 +3,8 @@
     <string name="empty_state">No web apps yet</string>
     <string name="mypass_available">MyPass available</string>
     <string name="mypass_unavailable">MyPass unavailable; you can still save and use this app</string>
+    <string name="provider_incompatible">Web apps cannot run with the current WebView provider (%1$s, version %2$s). Update this provider in your app store or Android settings, then return here. You can still configure or remove saved apps. Launching, discovery, and clearing site data are paused until compatibility is restored.</string>
+    <string name="provider_unknown">unknown</string>
+    <string name="provider_settings">Open WebView provider settings</string>
+    <string name="provider_settings_unavailable">Provider settings are unavailable on this device. Open your app store or Android settings and update the WebView provider.</string>
 </resources>

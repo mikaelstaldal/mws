@@ -167,13 +167,14 @@ There is no cap on apps or widgets. Every add or update handles storage/allocati
 
 ## 7. Provider compatibility and runtime self-test
 
-- Release builds embed, per provider package, a minimum version floor generated from qualifying entries in the compatibility matrix (§13). A package absent from the matrix is incompatible.
+- Release builds embed, per provider package, a minimum version floor generated at build time from qualifying `PASS` entries in the compatibility matrix (§15). A package absent from the matrix is incompatible. Version names must be numeric dot-separated components; unknown formats fail closed.
 - Shell launch and WebView-backed discovery require all of the following:
   - the provider package is listed;
   - its version is at or above the floor;
   - it reports `MULTI_PROFILE`;
   - the runtime self-test's isolation and deletion probes pass.
   Otherwise the app shows the provider and version with update instructions. If compatibility disappears later, profile access, discovery and clear are blocked without modifying stored data. Removal still works (§5.2). The default profile is never a fallback.
+- A debug build may set `debugProviderOverride=true` in `local.properties` (or `DEBUG_PROVIDER_OVERRIDE=true`) to bypass the package floor and a pending self-test during development. It still requires `MULTI_PROFILE` and does not override an explicitly failed isolation or deletion probe. Release builds cannot enable this override.
 - **Runtime self-test** match key: provider package, provider version, Android API level and primary CPU ABI. It runs on first start and whenever the key changes, before any provider-sensitive feature is enabled.
   - It uses a dedicated disposable profile and no network. Synthetic responses for a reserved `.invalid` HTTPS origin are served via `shouldInterceptRequest`.
   - Probes, each failing closed independently:
