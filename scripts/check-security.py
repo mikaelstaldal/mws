@@ -29,6 +29,7 @@ layout_webview = re.compile(r"<(?:android\.webkit\.)?WebView\b")
 # Only the profile manager may construct WebViews, bind profiles or call ProfileStore.
 profile_owner = Path("app/src/main/java/nu/staldal/mws/ProfileManager.kt")
 shell_owner = Path("app/src/main/java/nu/staldal/mws/ShellActivity.kt")
+discovery_owner = Path("app/src/main/java/nu/staldal/mws/DiscoverySession.kt")
 profile_patterns = {
     "WebView construction outside ProfileManager": re.compile(r"\bWebView\s*\("),
     "profile binding outside ProfileManager": re.compile(r"\bsetProfile\b|\bProfileStore\b"),
@@ -42,8 +43,8 @@ for path in source.rglob("*"):
         continue
     data = path.read_text()
     if re.search(r"\bonReceivedSslError\b", data):
-        # The shell may report TLS failure only after explicitly cancelling it.
-        if path != shell_owner or "handler.cancel()" not in data or re.search(r"\bproceed\s*\(", data):
+        # Both navigation hosts may report TLS failure only after cancelling it.
+        if path not in {shell_owner, discovery_owner} or "handler.cancel()" not in data or re.search(r"\bproceed\s*\(", data):
             violations.append(f"{path}: SSL error callback")
     for label, pattern in patterns.items():
         if pattern.search(data):

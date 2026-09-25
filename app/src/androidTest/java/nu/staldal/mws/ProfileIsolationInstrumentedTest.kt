@@ -117,6 +117,16 @@ class ProfileIsolationInstrumentedTest {
         assertEquals("true", evalAsync(survivor, "caches.has('c')"))
     }
 
+    @Test fun disposableDiscoveryDataNeverAppearsInRuntimeProfile() {
+        val disposable = ProfileNames.disposable(UUID.randomUUID().toString()).also(names::add)
+        val discovery = open(disposable)
+        writeEverything(discovery, "discovery")
+        close(discovery)
+
+        val runtime = open(newName())
+        assertNothingVisible(runtime)
+    }
+
     @Test fun thirdPartyCookieSettingIsPerProfile() {
         val first = open(newName())
         val second = open(newName())
