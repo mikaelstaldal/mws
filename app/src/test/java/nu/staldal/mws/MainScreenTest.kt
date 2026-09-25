@@ -107,6 +107,7 @@ class MainScreenTest {
         val activity = controller.get()
         val rows = rows(activity)
         await { rows.childCount == 1 }
+        await { activity.findViewById<View>(R.id.provider_error_entry).visibility == View.VISIBLE }
         assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.provider_error_entry).visibility)
         rows.getChildAt(0).performClick()
         assertEquals(ProviderErrorActivity::class.java.name,

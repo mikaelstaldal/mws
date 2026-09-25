@@ -4,6 +4,13 @@ import android.content.Context
 import androidx.annotation.VisibleForTesting
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
+import android.util.Log
 
 /**
  * Process-wide collaborators shared by the main screen and every shell. There is exactly one
@@ -17,6 +24,7 @@ class ShellServices(
     val profiles: ProfileManager,
     val icons: IconStore,
     private val selfTest: (suspend () -> Unit)? = null,
+    private val reconcileWidgets: (suspend () -> Unit)? = null,
 ) {
     private val startupLock = Mutex()
     private var startup: StartupReport? = null
@@ -37,7 +45,11 @@ class ShellServices(
         }
         val decision = compatibility.current()
         if (startup == null || (!startupCompatible && decision.compatible)) {
-            startup = profiles.startupMaintenance()
+            val report = profiles.startupMaintenance()
+            try { reconcileWidgets?.invoke() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { Log.w("ShellServices", "Widget reconciliation failed", failure) }
+            startup = report
             startupCompatible = decision.compatible
         }
         checkNotNull(startup)
@@ -68,12 +80,24 @@ class ShellServices(
             val profiles = ProfileManager(repository, maintenance, compatibility,
                 AndroidWebProfileBackend(), shells, object : AppNativeData {
                     override fun deleteIcons(appId: String) = icons.delete(appId)
-                    override fun widgetsChanged() {} // Widgets are not implemented yet.
+                    override fun widgetsChanged() {
+                        try { MultiWidget.refresh(context) }
+                        catch (failure: Exception) { Log.w("ShellServices", "Widget refresh failed", failure) }
+                    }
                 })
             val runner = ProviderSelfTestRunner(source, maintenance, listOf(
                 IsolationProbe(context, profiles), DeletionProbe(context)))
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                repository.apps.collect {
+                    try { MultiWidget.refresh(context) }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (_: Exception) {
+                        // A later configuration change or provider update retries the refresh.
+                    }
+                }
+            }
             return ShellServices(repository, compatibility, shells, profiles, icons,
-                { runner.runIfNeeded() })
+                { runner.runIfNeeded() }, { withContext(Dispatchers.IO) { MultiWidget.reconcile(context) } })
         }
     }
 }

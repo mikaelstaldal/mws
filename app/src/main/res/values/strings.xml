@@ -1,5 +1,11 @@
 <resources>
     <string name="app_name">Mobile Web Shell</string>
+    <string name="widget_empty">No apps to show. Tap to open Mobile Web Shell.</string>
+    <string name="widget_all_apps">All apps</string>
+    <string name="widget_selected_apps">Selected apps</string>
+    <string name="widget_save">Save widget</string>
+    <string name="widget_save_failed">Could not save the widget. Try again.</string>
+    <string name="widget_configure">Choose which apps to show</string>
     <string name="empty_state">No web apps yet</string>
     <string name="add_web_app">Add web app</string>
     <string name="clearing_label">Clearing site data…</string>

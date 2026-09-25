@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="nu.staldal.mypass.permission.FETCH_PASSWORD" />
 
     <queries>
@@ -34,5 +35,21 @@
         <activity android:name=".ProviderErrorActivity" android:exported="false" />
         <service android:name=".SelfTestProcessService" android:process=":selftest"
             android:exported="false" />
+        <activity android:name=".MultiWidgetConfigureActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
+        <service android:name=".MultiWidgetService" android:exported="true"
+            android:permission="android.permission.BIND_REMOTEVIEWS" />
+        <receiver android:name=".MultiWidgetProvider" android:exported="true">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+            <meta-data android:name="android.appwidget.provider"
+                android:resource="@xml/widget_multi_info" />
+        </receiver>
     </application>
 </manifest>

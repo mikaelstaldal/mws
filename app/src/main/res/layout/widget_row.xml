@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_row" android:layout_width="match_parent"
+    android:layout_height="wrap_content" android:minHeight="48dp"
+    android:gravity="center_vertical" android:orientation="horizontal" android:padding="6dp">
+    <ImageView android:id="@+id/widget_row_icon" android:layout_width="40dp"
+        android:layout_height="40dp" android:contentDescription="@null" />
+    <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content"
+        android:layout_weight="1" android:orientation="vertical" android:paddingStart="8dp">
+        <TextView android:id="@+id/widget_row_name" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:maxLines="1" android:textColor="#202124" />
+        <TextView android:id="@+id/widget_row_state" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:maxLines="1" android:text="@string/clearing_label"
+            android:textColor="#5f6368" />
+    </LinearLayout>
+</LinearLayout>

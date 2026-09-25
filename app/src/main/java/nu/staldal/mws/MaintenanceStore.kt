@@ -203,6 +203,21 @@ class MaintenanceStore(context: Context) : Closeable {
         database.delete("widgets", "widget_id = ?", arrayOf(appWidgetId.toString()))
     }
 
+    @Synchronized fun widgetIds(): List<Int> = database.rawQuery(
+        "SELECT widget_id FROM widgets", null).use { c ->
+        buildList { while (c.moveToNext()) add(c.getInt(0)) }
+    }
+
+    @Synchronized fun pruneWidgets(installedIds: Set<Int>, type: WidgetType? = null) {
+        database.beginTransaction()
+        try {
+            widgetIds().filterNot(installedIds::contains).filter { id ->
+                type == null || widget(id)?.widgetType == type
+            }.forEach(::deleteWidget)
+            database.setTransactionSuccessful()
+        } finally { database.endTransaction() }
+    }
+
     @Synchronized fun pruneWidgetSelection(appId: String) {
         database.delete("widget_selection", "app_id = ?", arrayOf(appId))
     }
