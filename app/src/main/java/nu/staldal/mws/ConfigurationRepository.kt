@@ -55,6 +55,44 @@ class ConfigurationRepository(private val database: ConfigurationDatabase) {
         }
     }
 
+    /**
+     * Clear step 1 (A§5.2): in one transaction retire the active generation, reserve the next
+     * never-used one and enter CLEARING. [change] lets an origin-changing save store its new
+     * snapshot in the same transaction. A record that is already CLEARING is returned unchanged,
+     * so a retry never reserves a second generation or targets the reserved one.
+     */
+    suspend fun reserveNextGeneration(id: String,
+        change: (ConfiguredApp) -> ConfiguredApp = { it }): GenerationReservation =
+        try {
+            database.withTransaction {
+                val saved = dao.get(id) ?: return@withTransaction GenerationReservation.MissingApp
+                if (saved.profileState == ProfileState.CLEARING) {
+                    return@withTransaction GenerationReservation.Reserved(saved)
+                }
+                val reserved = change(saved).copy(id = saved.id, sortPosition = saved.sortPosition,
+                    createdAt = saved.createdAt, profileState = ProfileState.CLEARING,
+                    retiringProfileGeneration = saved.profileGeneration,
+                    profileGeneration = saved.profileGeneration + 1)
+                dao.update(reserved)
+                GenerationReservation.Reserved(reserved)
+            }
+        } catch (failure: Exception) {
+            storageFailure(failure)?.let { GenerationReservation.StorageFailure(it) } ?: throw failure
+        }
+
+    /** Clear step 4: only the recorded retiring generation can be finished, and only once. */
+    suspend fun finishClearing(id: String, retiringGeneration: Long): ConfigurationWriteResult = write {
+        database.withTransaction {
+            val saved = dao.get(id) ?: return@withTransaction ConfigurationWriteResult.MissingApp
+            if (saved.profileState == ProfileState.CLEARING &&
+                saved.retiringProfileGeneration == retiringGeneration) {
+                dao.update(saved.copy(profileState = ProfileState.ACTIVE,
+                    retiringProfileGeneration = null))
+            }
+            ConfigurationWriteResult.Success
+        }
+    }
+
     suspend fun reorder(ids: List<String>): ConfigurationWriteResult = write {
         database.withTransaction {
             val existing = dao.ordered().map { it.id }
@@ -83,19 +121,23 @@ class ConfigurationRepository(private val database: ConfigurationDatabase) {
     private suspend fun write(block: suspend () -> ConfigurationWriteResult): ConfigurationWriteResult =
         try {
             block()
-        } catch (failure: SQLiteFullException) {
-            ConfigurationWriteResult.StorageFailure(failure)
-        } catch (failure: SQLiteDiskIOException) {
-            ConfigurationWriteResult.StorageFailure(failure)
-        } catch (failure: SQLiteOutOfMemoryException) {
-            ConfigurationWriteResult.StorageFailure(failure)
-        } catch (failure: SQLiteCantOpenDatabaseException) {
-            ConfigurationWriteResult.StorageFailure(failure)
-        } catch (failure: SQLiteReadOnlyDatabaseException) {
-            ConfigurationWriteResult.StorageFailure(failure)
-        } catch (failure: SQLiteDatabaseLockedException) {
-            ConfigurationWriteResult.StorageFailure(failure)
+        } catch (failure: Exception) {
+            storageFailure(failure)?.let { ConfigurationWriteResult.StorageFailure(it) } ?: throw failure
         } catch (failure: OutOfMemoryError) {
             ConfigurationWriteResult.StorageFailure(failure)
         }
+
+    private fun storageFailure(failure: Exception): Throwable? = when (failure) {
+        is SQLiteFullException, is SQLiteDiskIOException, is SQLiteOutOfMemoryException,
+        is SQLiteCantOpenDatabaseException, is SQLiteReadOnlyDatabaseException,
+        is SQLiteDatabaseLockedException -> failure
+        else -> null
+    }
+}
+
+sealed interface GenerationReservation {
+    /** [app] is CLEARING with a non-null retiring generation. */
+    data class Reserved(val app: ConfiguredApp) : GenerationReservation
+    data object MissingApp : GenerationReservation
+    data class StorageFailure(val cause: Throwable) : GenerationReservation
 }

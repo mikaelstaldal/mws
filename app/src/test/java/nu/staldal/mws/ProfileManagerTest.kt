@@ -1,0 +1,424 @@
+package nu.staldal.mws
+
+import android.content.Context
+import android.webkit.WebView
+import androidx.room.Room
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import org.junit.After
+import org.junit.Assert.*
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
+import org.robolectric.annotation.Config
+import java.util.UUID
+
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
+class ProfileManagerTest {
+    private val context: Context get() = RuntimeEnvironment.getApplication()
+    private lateinit var database: ConfigurationDatabase
+    private lateinit var repository: ConfigurationRepository
+    private lateinit var store: MaintenanceStore
+    private val backend = FakeBackend()
+    private var compatible = true
+    private val closedShells = mutableListOf<String>()
+    private val deletedIcons = mutableListOf<String>()
+    private var widgetUpdates = 0
+
+    @Before fun setUp() {
+        database = Room.inMemoryDatabaseBuilder(context, ConfigurationDatabase::class.java)
+            .allowMainThreadQueries().build()
+        repository = ConfigurationRepository(database)
+        store = MaintenanceStore(context)
+    }
+
+    @After fun tearDown() {
+        database.close()
+        store.close()
+    }
+
+    /** A new instance models a fresh process: nothing in memory survives, persisted state does. */
+    private fun manager() = ProfileManager(repository, store,
+        ProviderCompatibility(
+            { ProviderSnapshot(PROVIDER, compatible) },
+            { key -> ProviderSelfTestResult(key, true, true, true, true, true, true) },
+            floors = mapOf(PROVIDER.packageName to listOf(1)),
+        ),
+        backend, { closedShells += it },
+        object : AppNativeData {
+            override fun deleteIcons(appId: String) { deletedIcons += appId }
+            override fun widgetsChanged() { widgetUpdates++ }
+        },
+        clock = { 1000L }, main = Dispatchers.Unconfined, io = Dispatchers.Unconfined)
+
+    private fun newApp(generation: Long = 0): ConfiguredApp = runBlocking {
+        val id = UUID.randomUUID().toString()
+        val app = ConfiguredApp(id, "App", NameSource.DISCOVERED, "https://example.com/",
+            null, "https://example.com/", "https://example.com/", profileGeneration = generation,
+            createdAt = 1, updatedAt = 1)
+        assertEquals(ConfigurationWriteResult.Success, repository.add(app))
+        app
+    }
+
+    private fun started(): ProfileManager = manager().also { runBlocking { it.startupMaintenance() } }
+
+    private fun attach(manager: ProfileManager, id: String) = runBlocking {
+        manager.createAppWebView(context, id)
+    }
+
+    @Test fun profileNamesAreOpaqueAndGenerationScoped() {
+        val id = UUID.randomUUID().toString()
+        assertEquals("mws-app-$id-3", ProfileNames.app(id, 3))
+        assertNotEquals(ProfileNames.app(id, 3), ProfileNames.app(id, 4))
+        assertEquals("mws-disposable-$id", ProfileNames.disposable(id))
+        for (bad in listOf("https://example.com", "a/b", "", "a b", "a".repeat(65))) {
+            assertThrows(IllegalArgumentException::class.java) { ProfileNames.app(bad, 0) }
+        }
+        assertThrows(IllegalArgumentException::class.java) { ProfileNames.app(id, -1) }
+    }
+
+    @Test fun reservationIsAtomicAndIdempotent() = runBlocking {
+        val app = newApp(generation = 4)
+        val reserved = (repository.reserveNextGeneration(app.id) as GenerationReservation.Reserved).app
+        assertEquals(ProfileState.CLEARING, reserved.profileState)
+        assertEquals(4L, reserved.retiringProfileGeneration)
+        assertEquals(5L, reserved.profileGeneration)
+        assertEquals(reserved, repository.get(app.id))
+        // A second reservation (retry, restart) resumes rather than reserving generation 6.
+        assertEquals(reserved, (repository.reserveNextGeneration(app.id) as GenerationReservation.Reserved).app)
+        // Finishing a different generation is ignored.
+        repository.finishClearing(app.id, 5)
+        assertEquals(ProfileState.CLEARING, repository.get(app.id)?.profileState)
+        repository.finishClearing(app.id, 4)
+        assertEquals(ProfileState.ACTIVE, repository.get(app.id)?.profileState)
+        assertNull(repository.get(app.id)?.retiringProfileGeneration)
+        assertEquals(GenerationReservation.MissingApp, repository.reserveNextGeneration("missing"))
+    }
+
+    @Test fun clearClosesShellDeletesRetiringGenerationAndItsPermissions() = runBlocking {
+        val app = newApp(generation = 2)
+        val other = newApp(generation = 2)
+        val manager = started()
+        val bound = (attach(manager, app.id) as AttachResult.Attached).bound
+        val otherBound = (attach(manager, other.id) as AttachResult.Attached).bound
+        for (generation in listOf(2L, 3L)) store.putPermissionDecision(PermissionDecision(app.id,
+            generation, "https://example.com", PermissionCapability.GEOLOCATION, SiteDecision.SITE_ALLOW))
+        store.putPermissionDecision(PermissionDecision(other.id, 2, "https://example.com",
+            PermissionCapability.GEOLOCATION, SiteDecision.SITE_ALLOW))
+
+        assertEquals(ClearResult.Cleared, manager.clear(app.id))
+        assertEquals(listOf(app.id), closedShells)
+        assertTrue(backend.destroyed(bound.webView))
+        assertFalse(backend.destroyed(otherBound.webView))
+        assertEquals(listOf(ProfileNames.app(app.id, 2)), backend.deleteCalls)
+        val saved = repository.get(app.id)!!
+        assertEquals(ProfileState.ACTIVE, saved.profileState)
+        assertEquals(3L, saved.profileGeneration)
+        assertNull(store.permissionDecision(app.id, 2, "https://example.com", PermissionCapability.GEOLOCATION))
+        assertNotNull(store.permissionDecision(app.id, 3, "https://example.com", PermissionCapability.GEOLOCATION))
+        assertNotNull(store.permissionDecision(other.id, 2, "https://example.com", PermissionCapability.GEOLOCATION))
+        assertEquals(other.copy(sortPosition = 1), repository.get(other.id))
+        assertTrue(store.pendingOperations().none { it.intent.appId == app.id })
+        val next = (attach(manager, app.id) as AttachResult.Attached).bound
+        assertEquals(ProfileNames.app(app.id, 3), next.profileName)
+    }
+
+    @Test fun processDeathBeforeDeletionResumesAtStartupBeforeAnyLoad() = runBlocking {
+        val app = newApp()
+        repository.reserveNextGeneration(app.id) // died right after step 1
+        val restarted = manager()
+        assertEquals(AttachResult.Blocked(AttachBlock.STARTUP_PENDING), attach(restarted, app.id))
+        assertTrue(backend.bound.isEmpty())
+        val report = restarted.startupMaintenance()
+        assertTrue(report.clearingFailures.isEmpty())
+        assertEquals(listOf(ProfileNames.app(app.id, 0)), backend.deleteCalls)
+        assertEquals(ProfileState.ACTIVE, repository.get(app.id)?.profileState)
+        assertTrue(backend.deleteCalls.none { it == ProfileNames.app(app.id, 1) })
+    }
+
+    @Test fun processDeathAfterDeletionIsIdempotentOnRestart() = runBlocking {
+        val app = newApp()
+        val manager = started()
+        backend.failAfterDelete = RuntimeException("process died") // deleted, state not persisted
+        assertTrue(manager.clear(app.id) is ClearResult.Failed)
+        assertEquals(ProfileState.CLEARING, repository.get(app.id)?.profileState)
+        assertEquals(AttachResult.Blocked(AttachBlock.CLEARING), attach(manager, app.id))
+        backend.failAfterDelete = null
+
+        manager().startupMaintenance()
+        val retired = ProfileNames.app(app.id, 0)
+        assertEquals(listOf(retired, retired), backend.deleteCalls)
+        assertEquals(listOf(true, false), backend.deleteResults)
+        assertEquals(ProfileState.ACTIVE, repository.get(app.id)?.profileState)
+        assertEquals(1L, repository.get(app.id)?.profileGeneration)
+    }
+
+    @Test fun otherFailureStaysClearingAndRetryTargetsOnlyRetiringGeneration() = runBlocking {
+        val app = newApp(generation = 7)
+        val manager = started()
+        backend.failure = UnsupportedOperationException("provider error")
+        val failed = manager.clear(app.id)
+        assertEquals(backend.failure, (failed as ClearResult.Failed).cause)
+        assertEquals(ProfileState.CLEARING, repository.get(app.id)?.profileState)
+        assertTrue(store.tombstones().none { app.id in it.profileName })
+        backend.failure = null
+        assertEquals(ClearResult.Cleared, manager.clear(app.id))
+        assertEquals(List(2) { ProfileNames.app(app.id, 7) }, backend.deleteCalls)
+        assertEquals(8L, repository.get(app.id)?.profileGeneration)
+        assertEquals(ProfileState.ACTIVE, repository.get(app.id)?.profileState)
+    }
+
+    @Test fun loadedProfileDefersDeletionToRestart() = runBlocking {
+        val app = newApp()
+        val manager = started()
+        backend.inUse += ProfileNames.app(app.id, 0)
+        assertEquals(ClearResult.PendingRestart, manager.clear(app.id))
+        val saved = repository.get(app.id)!!
+        assertEquals(ProfileState.ACTIVE, saved.profileState)
+        assertNull(saved.retiringProfileGeneration)
+        assertEquals(ProfileTombstone(ProfileNames.app(app.id, 0), 0, 1000L),
+            store.tombstones().single { app.id in it.profileName })
+        // The tombstone never blocks the new generation, and is not used to attach.
+        assertEquals(ProfileNames.app(app.id, 1),
+            (attach(manager, app.id) as AttachResult.Attached).bound.profileName)
+
+        backend.inUse.clear() // process restarted
+        val report = manager().startupMaintenance()
+        assertTrue(report.pendingTombstones.none { app.id in it })
+        assertTrue(store.tombstones().none { app.id in it.profileName })
+        assertEquals(List(2) { ProfileNames.app(app.id, 0) }, backend.deleteCalls)
+    }
+
+    @Test fun removalTombstonesBothGenerationsAndDeletesNativeData() = runBlocking {
+        val app = newApp(generation = 1)
+        val other = newApp()
+        val manager = started()
+        (attach(manager, app.id) as AttachResult.Attached)
+        repository.reserveNextGeneration(app.id) // CLEARING: active 2, retiring 1
+        store.putPermissionDecision(PermissionDecision(app.id, 1, "https://example.com",
+            PermissionCapability.GEOLOCATION, SiteDecision.SITE_DENY))
+        store.putWidget(WidgetRecord(4242, WidgetType.MULTI_APP, SelectionMode.SELECTED_SUBSET,
+            setOf(app.id, other.id)))
+        backend.inUse += ProfileNames.app(app.id, 1)
+
+        assertEquals(RemovalResult.ProfileDeletionPending, manager.remove(app.id))
+        assertNull(repository.get(app.id))
+        assertEquals(0, repository.get(other.id)?.sortPosition)
+        assertEquals(listOf(app.id), deletedIcons)
+        assertEquals(1, widgetUpdates)
+        assertEquals(setOf(other.id), store.widget(4242)?.selectedAppIds)
+        assertNull(store.permissionDecision(app.id, 1, "https://example.com", PermissionCapability.GEOLOCATION))
+        assertEquals(listOf(app.id), closedShells)
+        assertEquals(setOf(ProfileNames.app(app.id, 1), ProfileNames.app(app.id, 2)),
+            backend.deleteCalls.toSet())
+        assertEquals(listOf(ProfileNames.app(app.id, 1)),
+            store.tombstones().filter { app.id in it.profileName }.map { it.profileName })
+        assertEquals(AttachResult.Blocked(AttachBlock.MISSING_APP), attach(manager, app.id))
+        store.deleteWidget(4242)
+
+        backend.inUse.clear()
+        manager().startupMaintenance()
+        assertTrue(store.tombstones().none { app.id in it.profileName })
+    }
+
+    @Test fun incompatibleRemovalMakesNoProfileCallsAndCompletesLater() = runBlocking {
+        val app = newApp(generation = 5)
+        started()
+        repository.reserveNextGeneration(app.id)
+        compatible = false
+        val manager = manager()
+        manager.startupMaintenance()
+        assertEquals(ClearResult.Incompatible, manager.clear(app.id))
+        assertEquals(AttachResult.Blocked(AttachBlock.INCOMPATIBLE), attach(manager, app.id))
+
+        assertEquals(RemovalResult.ProfileDeletionPending, manager.remove(app.id))
+        assertNull(repository.get(app.id))
+        assertEquals(listOf(app.id), deletedIcons)
+        assertTrue(backend.deleteCalls.isEmpty())
+        assertTrue(backend.bound.isEmpty())
+        assertEquals(setOf(ProfileNames.app(app.id, 5), ProfileNames.app(app.id, 6)),
+            store.tombstones().filter { app.id in it.profileName }.map { it.profileName }.toSet())
+
+        manager().startupMaintenance() // still incompatible
+        assertTrue(backend.deleteCalls.isEmpty())
+
+        compatible = true
+        manager().startupMaintenance()
+        assertEquals(setOf(ProfileNames.app(app.id, 5), ProfileNames.app(app.id, 6)),
+            backend.deleteCalls.toSet())
+        assertTrue(store.tombstones().none { app.id in it.profileName })
+    }
+
+    @Test fun interruptedRemovalResumesBeforeTombstoneRetry() = runBlocking {
+        val app = newApp()
+        val manager = started()
+        val iconFailure = RuntimeException("storage full")
+        val failing = ProfileManager(repository, store,
+            ProviderCompatibility({ ProviderSnapshot(PROVIDER, true) },
+                { key -> ProviderSelfTestResult(key, true, true, true, true, true, true) },
+                floors = mapOf(PROVIDER.packageName to listOf(1))),
+            backend, { }, object : AppNativeData {
+                override fun deleteIcons(appId: String) = throw iconFailure
+                override fun widgetsChanged() {}
+            }, main = Dispatchers.Unconfined, io = Dispatchers.Unconfined)
+        failing.startupMaintenance()
+        assertEquals(RemovalResult.NativeDeletionPending(iconFailure), failing.remove(app.id))
+        assertTrue(backend.deleteCalls.isEmpty())
+        assertTrue(store.hasTombstone(ProfileNames.app(app.id, 0)))
+        assertEquals(AttachResult.Blocked(AttachBlock.MISSING_APP), attach(manager, app.id))
+
+        manager().startupMaintenance()
+        assertEquals(listOf(app.id), deletedIcons)
+        assertEquals(listOf(ProfileNames.app(app.id, 0)), backend.deleteCalls)
+        assertFalse(store.hasTombstone(ProfileNames.app(app.id, 0)))
+        assertTrue(store.pendingOperations().none { it.intent.appId == app.id })
+    }
+
+    @Test fun tombstoneForLiveActiveGenerationIsNeverDeleted() = runBlocking {
+        val app = newApp()
+        store.putTombstone(ProfileTombstone(ProfileNames.app(app.id, 0), 0, 1))
+        manager().startupMaintenance()
+        assertTrue(backend.deleteCalls.isEmpty())
+        store.deleteTombstone(ProfileNames.app(app.id, 0))
+    }
+
+    @Test fun disposableProfileIsRegisteredBeforeBindingAndCleanedUp() = runBlocking {
+        val manager = started()
+        val unregistered = DisposableProfile(UUID.randomUUID().toString())
+        assertEquals(AttachResult.Blocked(AttachBlock.NOT_REGISTERED),
+            manager.createDisposableWebView(context, unregistered))
+
+        assertNull(manager().createDisposableProfile()) // before startup maintenance
+        val profile = manager.createDisposableProfile()!!
+        assertTrue(store.hasDiscoveryProfile(profile.profileId))
+        backend.onBind = { name -> assertTrue(store.hasDiscoveryProfile(name.removePrefix("mws-disposable-"))) }
+        val bound = (manager.createDisposableWebView(context, profile) as AttachResult.Attached).bound
+        assertEquals(profile.profileName, bound.profileName)
+        backend.inUse += profile.profileName
+        assertEquals(DeletionOutcome.Deferred, manager.retireDisposable(profile))
+        assertTrue(backend.destroyed(bound.webView))
+        assertTrue(store.hasDiscoveryProfile(profile.profileId))
+        // A deferred profile keeps its record for cleanup but can never be attached again.
+        assertEquals(AttachResult.Blocked(AttachBlock.NOT_REGISTERED),
+            manager.createDisposableWebView(context, profile))
+
+        backend.inUse.clear()
+        manager().startupMaintenance()
+        assertFalse(store.hasDiscoveryProfile(profile.profileId))
+        assertEquals(List(2) { profile.profileName }, backend.deleteCalls)
+
+        val second = manager.createDisposableProfile()!!
+        assertNotEquals(profile, second)
+        assertEquals(DeletionOutcome.Deleted, manager.retireDisposable(second))
+        assertFalse(store.hasDiscoveryProfile(second.profileId))
+    }
+
+    @Test fun webViewsAreBoundBeforeFirstLoadWithThirdPartyCookieSetting() = runBlocking {
+        val app = newApp()
+        repository.update(app.copy(allowThirdPartyCookies = true))
+        val manager = started()
+        val bound = (attach(manager, app.id) as AttachResult.Attached).bound
+        assertEquals(listOf(ProfileNames.app(app.id, 0) to null), backend.bound)
+        assertEquals(true, backend.thirdPartyCookies[bound.webView])
+        manager.applyThirdPartyCookies(bound, false)
+        assertEquals(false, backend.thirdPartyCookies[bound.webView])
+        manager.release(bound)
+        assertTrue(backend.destroyed(bound.webView))
+    }
+
+    @Test fun shellRegistryClosesOnlyTheTargetApp() = runBlocking {
+        val registry = LiveShellRegistry()
+        val closed = mutableListOf<String>()
+        registry.register("a") { closed += "a1" }
+        val unregister = registry.register("a") { closed += "a2" }
+        registry.register("b") { closed += "b" }
+        unregister()
+        registry.closeAll("a")
+        registry.closeAll("a")
+        assertEquals(listOf("a1"), closed)
+
+        var fail = true
+        registry.register("c") { if (fail) error("busy") else closed += "c1" }
+        registry.register("c") { closed += "c2" }
+        assertThrows(IllegalStateException::class.java) { runBlocking { registry.closeAll("c") } }
+        assertEquals(listOf("a1", "c2"), closed)
+        fail = false
+        registry.closeAll("c")
+        assertEquals(listOf("a1", "c2", "c1"), closed)
+    }
+
+    @Test fun failedShellCloseKeepsClearingAndRemovalPending() = runBlocking {
+        val app = newApp()
+        val closeFailure = IllegalStateException("shell busy")
+        val manager = ProfileManager(repository, store,
+            ProviderCompatibility({ ProviderSnapshot(PROVIDER, true) },
+                { key -> ProviderSelfTestResult(key, true, true, true, true, true, true) },
+                floors = mapOf(PROVIDER.packageName to listOf(1))),
+            backend, { throw closeFailure }, object : AppNativeData {
+                override fun deleteIcons(appId: String) { deletedIcons += appId }
+                override fun widgetsChanged() {}
+            }, main = Dispatchers.Unconfined, io = Dispatchers.Unconfined)
+        manager.startupMaintenance()
+        assertEquals(ClearResult.Failed(closeFailure), manager.clear(app.id))
+        assertEquals(ProfileState.CLEARING, repository.get(app.id)?.profileState)
+        assertTrue(backend.deleteCalls.isEmpty())
+        assertEquals(RemovalResult.NativeDeletionPending(closeFailure), manager.remove(app.id))
+        assertNotNull(repository.get(app.id))
+        assertTrue(backend.deleteCalls.isEmpty())
+        assertEquals(AttachResult.Blocked(AttachBlock.CLEARING), attach(manager, app.id))
+
+        manager().startupMaintenance() // new process: no live shells, journal completes
+        assertNull(repository.get(app.id))
+        assertEquals(setOf(ProfileNames.app(app.id, 0), ProfileNames.app(app.id, 1)),
+            backend.deleteCalls.toSet())
+        assertTrue(store.tombstones().none { app.id in it.profileName })
+    }
+
+    private class FakeBackend : WebProfileBackend {
+        val deleteCalls = mutableListOf<String>()
+        val deleteResults = mutableListOf<Boolean>()
+        val bound = mutableListOf<Pair<String, String?>>()
+        val inUse = mutableSetOf<String>()
+        val thirdPartyCookies = mutableMapOf<WebView, Boolean>()
+        private val deleted = mutableSetOf<String>()
+        private val destroyedViews = mutableSetOf<WebView>()
+        var failure: Exception? = null
+        var failAfterDelete: Exception? = null
+        var onBind: (String) -> Unit = {}
+
+        override fun deleteProfile(name: String): Boolean {
+            deleteCalls += name
+            failure?.let { throw it }
+            if (name in inUse) throw IllegalStateException("loaded")
+            val result = deleted.add(name) // true once, then false: absent
+            deleteResults += result
+            failAfterDelete?.let { throw it }
+            return result
+        }
+
+        override fun createBoundWebView(context: Context, name: String): WebView {
+            onBind(name)
+            val webView = object : WebView(context) {
+                override fun destroy() {
+                    destroyedViews += this
+                    super.destroy()
+                }
+            }
+            bound += name to webView.url
+            return webView
+        }
+
+        override fun setThirdPartyCookies(webView: WebView, allow: Boolean) {
+            thirdPartyCookies[webView] = allow
+        }
+
+        fun destroyed(webView: WebView) = webView in destroyedViews
+    }
+
+    companion object {
+        private val PROVIDER = ProviderKey("com.google.android.webview", "200.0", 28, "x86_64")
+    }
+}

@@ -59,9 +59,12 @@ This document records the technical design and constraints that implement
 
 - The profile name is derived from the opaque app ID plus `profileGeneration`. It contains no URL or credential. Retired names are never reused.
 - The profile resource is provider-owned data plus Mobile Web Shell's generation-keyed native permission decisions.
+- Names are `mws-app-<app ID>-<generation>` and `mws-disposable-<opaque ID>`. IDs are restricted to `[A-Za-z0-9_-]{1,64}`.
 - Every WebView (shell, new-window probe, discovery, self-test) is bound to its profile via `WebViewCompat.setProfile` **before its first load**. The default/global profile is never used by any WebView, cookie access or storage access. No `CookieManager`, storage manager, cache, service-worker controller or HTTP-auth store is treated as global.
 - The third-party-cookie setting is applied to the app's profile cookie manager. It affects subsequent requests without a reload.
 - Opening one app never initializes or attaches another app's profile.
+- `ProfileManager` is the only code that constructs a WebView, calls `WebViewCompat.setProfile` or touches `ProfileStore`, through `AndroidWebProfileBackend`. It attaches only after startup maintenance, while compatible, to an existing `ACTIVE` record's active generation that has no tombstone. `scripts/check-security.py` rejects WebView construction, profile binding or `DEFAULT_PROFILE_NAME` elsewhere, layout WebViews, `WebViewDatabase`, and every global `getInstance()` of `CookieManager`, `WebStorage`, `GeolocationPermissions` and `ServiceWorkerController`.
+- Live shells register with `LiveShellRegistry`. Clear and Remove call its `closeAll(appId)` hook before profile retirement, then destroy any remaining WebViews the manager handed out for the retiring names.
 
 ### 5.2 Profile state machine
 
@@ -88,7 +91,7 @@ After a crash, an intent whose configuration transaction has not completed is co
 
 Removal (no `DELETING` state is kept on the record):
 
-1. Write a durable, backup-excluded tombstone with creation time and the opaque name/generation of the active generation, plus the retiring one if the record is `CLEARING`.
+1. Write a durable, backup-excluded tombstone with creation time and the opaque name/generation of the active generation, plus the retiring one if the record is `CLEARING`. The tombstones commit in the same maintenance-store transaction as the `REMOVE_APP` journal intent.
 2. Close live WebViews and the shell task. Delete the configuration record, metadata, icons and permission decisions. Prune widget selections and update widgets.
 3. Attempt `deleteProfile` if the provider is compatible. `true`/`false` deletes the tombstone. Otherwise the tombstone remains for startup retry. Profile APIs are never called while incompatible.
 
@@ -97,7 +100,9 @@ Removal (no `DELETING` state is kept on the record):
 At every process start, **before any profile is loaded**:
 
 - Resume incomplete journal operations.
-- Retry `deleteProfile` for every tombstone and every disposable-discovery-profile record (when compatible). Remove the record only after `true`/`false`.
+- Retry `deleteProfile` for every tombstone and every disposable-discovery-profile record (when compatible). Remove the record only after `true`/`false`. A tombstone naming an existing record's active generation is skipped, because its removal journal has not completed.
+- Resume every `CLEARING` record from its persisted retiring generation (when compatible).
+- Attachment and disposable-profile registration wait until this maintenance finishes. A disposable profile attaches only while it is registered in the current process and not yet retired. A leftover record is only ever cleaned up.
 - Delete unreferenced icon files, permission decisions for absent or retired generations, and widget records for instances `AppWidgetManager` no longer reports. Clear dangling references and request a widget refresh.
 - A resource is unreferenced only when no active journal can still adopt it.
 

@@ -3,7 +3,9 @@ package nu.staldal.mws
 import androidx.test.platform.app.InstrumentationRegistry
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import okhttp3.tls.HandshakeCertificates
 import okhttp3.tls.HeldCertificate
 import java.io.Closeable
@@ -38,6 +40,13 @@ class LocalHttpsServer : Closeable {
 
     fun enqueue(body: String) {
         server.enqueue(MockResponse().setBody(body))
+    }
+
+    /** Replaces the response queue with [handler], which runs on the server thread. */
+    fun dispatch(handler: (RecordedRequest) -> MockResponse) {
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest) = handler(request)
+        }
     }
 
     override fun close() {

@@ -57,13 +57,20 @@ class MaintenanceStore(context: Context) : Closeable {
         pragmaValue("PRAGMA user_version"))
 
     /** A completed step is committed before the next step is invoked. */
-    @Synchronized fun begin(intent: OperationIntent, stepCount: Int): JournalEntry {
+    /** [tombstones] commit in the same transaction as the intent, so neither exists without the other. */
+    @Synchronized fun begin(intent: OperationIntent, stepCount: Int,
+        tombstones: List<ProfileTombstone> = emptyList()): JournalEntry {
         require(stepCount > 0)
         val id = UUID.randomUUID().toString()
-        database.insertOrThrow("operations", null, values(
-            "id" to id, "type" to intent.type.name, "app_id" to intent.appId,
-            "old_generation" to intent.oldGeneration, "new_generation" to intent.newGeneration,
-            "resource_id" to intent.resourceId, "step_count" to stepCount))
+        database.beginTransaction()
+        try {
+            tombstones.forEach(::putTombstone)
+            database.insertOrThrow("operations", null, values(
+                "id" to id, "type" to intent.type.name, "app_id" to intent.appId,
+                "old_generation" to intent.oldGeneration, "new_generation" to intent.newGeneration,
+                "resource_id" to intent.resourceId, "step_count" to stepCount))
+            database.setTransactionSuccessful()
+        } finally { database.endTransaction() }
         return JournalEntry(id, intent, stepCount, 0)
     }
 
@@ -78,7 +85,7 @@ class MaintenanceStore(context: Context) : Closeable {
             "FROM operations WHERE id = ?", arrayOf(id)).use { cursor ->
         check(cursor.moveToFirst()) { "Missing journal entry $id" }
         JournalEntry(id, OperationIntent(OperationType.valueOf(cursor.getString(0)),
-            cursor.nullableString(1), cursor.nullableInt(2), cursor.nullableInt(3),
+            cursor.nullableString(1), cursor.nullableLong(2), cursor.nullableLong(3),
             cursor.nullableString(4)), cursor.getInt(5), cursor.getInt(6))
     }
 
@@ -111,8 +118,11 @@ class MaintenanceStore(context: Context) : Closeable {
 
     @Synchronized fun tombstones(): List<ProfileTombstone> = database.rawQuery(
         "SELECT profile_name,generation,created_at FROM tombstones ORDER BY created_at", null).use { c ->
-        buildList { while (c.moveToNext()) add(ProfileTombstone(c.getString(0), c.getInt(1), c.getLong(2))) }
+        buildList { while (c.moveToNext()) add(ProfileTombstone(c.getString(0), c.getLong(1), c.getLong(2))) }
     }
+
+    @Synchronized fun hasTombstone(profileName: String): Boolean = database.rawQuery(
+        "SELECT 1 FROM tombstones WHERE profile_name = ?", arrayOf(profileName)).use(Cursor::moveToFirst)
 
     @Synchronized fun deleteTombstone(profileName: String) {
         database.delete("tombstones", "profile_name = ?", arrayOf(profileName))
@@ -140,7 +150,7 @@ class MaintenanceStore(context: Context) : Closeable {
             "decision" to record.decision.name), SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    @Synchronized fun permissionDecision(appId: String, generation: Int, origin: String,
+    @Synchronized fun permissionDecision(appId: String, generation: Long, origin: String,
         capability: PermissionCapability): PermissionDecision? = database.rawQuery(
         "SELECT decision FROM permission_decisions WHERE app_id = ? AND generation = ? " +
             "AND origin = ? AND capability = ?",
@@ -149,10 +159,17 @@ class MaintenanceStore(context: Context) : Closeable {
             SiteDecision.valueOf(c.getString(0))) else null
     }
 
-    @Synchronized fun deletePermissionDecisions(appId: String, generation: Int) {
+    @Synchronized fun deletePermissionDecisions(appId: String, generation: Long) {
         database.delete("permission_decisions", "app_id = ? AND generation = ?",
             arrayOf(appId, generation.toString()))
     }
+
+    @Synchronized fun deleteAllPermissionDecisions(appId: String) {
+        database.delete("permission_decisions", "app_id = ?", arrayOf(appId))
+    }
+
+    @Synchronized fun hasDiscoveryProfile(profileId: String): Boolean = database.rawQuery(
+        "SELECT 1 FROM discovery_profiles WHERE profile_id = ?", arrayOf(profileId)).use(Cursor::moveToFirst)
 
     @Synchronized fun putWidget(record: WidgetRecord) {
         database.beginTransaction()
@@ -228,23 +245,23 @@ class MaintenanceStore(context: Context) : Closeable {
     }
 
     private fun Cursor.nullableString(index: Int) = if (isNull(index)) null else getString(index)
-    private fun Cursor.nullableInt(index: Int) = if (isNull(index)) null else getInt(index)
+    private fun Cursor.nullableLong(index: Int) = if (isNull(index)) null else getLong(index)
 }
 
 enum class OperationType { ADD_APP, REMOVE_APP, UPDATE_URL, CLEAR_DATA, RESTORE,
     UPDATE_ICON, UPDATE_WIDGET, DELETE_PERMISSION_DECISIONS }
 
 data class OperationIntent(val type: OperationType, val appId: String? = null,
-    val oldGeneration: Int? = null, val newGeneration: Int? = null,
+    val oldGeneration: Long? = null, val newGeneration: Long? = null,
     val resourceId: String? = null)
 data class JournalEntry(val id: String, val intent: OperationIntent,
     val stepCount: Int, val completedSteps: Int)
 
-data class ProfileTombstone(val profileName: String, val generation: Int, val createdAt: Long)
+data class ProfileTombstone(val profileName: String, val generation: Long, val createdAt: Long)
 data class DiscoveryProfile(val profileId: String, val createdAt: Long)
 enum class PermissionCapability { GEOLOCATION }
 enum class SiteDecision { SITE_ALLOW, SITE_DENY }
-data class PermissionDecision(val appId: String, val generation: Int, val origin: String,
+data class PermissionDecision(val appId: String, val generation: Long, val origin: String,
     val capability: PermissionCapability, val decision: SiteDecision)
 enum class WidgetType { MULTI_APP, SINGLE_APP }
 enum class SelectionMode { ALL_APPS, SELECTED_SUBSET }
@@ -263,9 +280,9 @@ data class RuntimeSelfTest(val matchKey: String, val features: Map<String, Boole
 /** Step actions must tolerate replay: a crash can happen after the action but before cursor commit. */
 class OperationJournal(private val store: MaintenanceStore,
     private val plans: Map<OperationType, List<(OperationIntent) -> Unit>>) {
-    fun start(intent: OperationIntent): JournalEntry {
+    fun start(intent: OperationIntent, tombstones: List<ProfileTombstone> = emptyList()): JournalEntry {
         val steps = requireNotNull(plans[intent.type]) { "No plan for ${intent.type}" }
-        return store.begin(intent, steps.size)
+        return store.begin(intent, steps.size, tombstones)
     }
 
     fun run(entry: JournalEntry) {
