@@ -49,7 +49,7 @@ This document records the technical design and constraints that implement
 ## 4. Network security
 
 - The network security config disables cleartext with no exceptions. This is the fail-closed enforcement layer; WebView callbacks provide early cancellation and user-facing errors only.
-- Release builds contain no permissive `onReceivedSslError` or other SSL callbacks.
+- The shell's SSL error callback always cancels the request and shows a local error. No SSL callback may proceed past a certificate failure; the security source check enforces this for the shell and rejects SSL callbacks elsewhere.
 - Safe Browsing is enabled when supported. Mixed content mode is `MIXED_CONTENT_NEVER_ALLOW`. `setWebContentsDebuggingEnabled(false)` in production.
 - The provider matrix (§13) records, per flow (direct links, redirects, GET/POST form submissions, pop-ups, external intents), whether cleartext is rejected before any request bytes are sent. Failure of any flow makes that provider version incompatible.
 

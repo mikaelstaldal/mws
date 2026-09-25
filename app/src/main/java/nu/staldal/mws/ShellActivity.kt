@@ -8,14 +8,27 @@ import android.graphics.Bitmap
 import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.os.SystemClock
+import android.view.Gravity
+import android.view.View
 import android.view.ViewGroup
 import android.webkit.GeolocationPermissions
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceError
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
+import android.net.http.SslError
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
+import android.widget.Button
+import android.widget.LinearLayout
+import android.widget.ProgressBar
+import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
@@ -45,6 +58,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     private lateinit var container: FrameLayout
     private var taskDescriptionJob: Job? = null
     private var closing = false
+    private var overlay: View? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -57,6 +71,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         setContentView(container)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
+                if (holder?.dismissError() == true) return
                 val webView = holder?.bound?.webView
                 if (webView != null && webView.canGoBack()) webView.goBack() else finishAndRemoveTask()
             }
@@ -66,6 +81,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         // process death a fresh holder loads the resolved launch URL (A§9.2).
         holder = ViewModelProvider(this, ShellHolder.Factory(services, appId, applicationContext))
             .get(ShellHolder::class.java).also { it.attach(this) }
+        renderOverlay()
     }
 
     override fun onResume() {
@@ -81,7 +97,52 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
 
     override fun onReady(webView: WebView) {
         (webView.parent as? ViewGroup)?.removeView(webView)
+        container.removeAllViews()
+        overlay = null
         container.addView(webView, FrameLayout.LayoutParams(-1, -1))
+        renderOverlay()
+    }
+
+    override fun onPresentationChanged() = renderOverlay()
+
+    private fun renderOverlay() {
+        overlay?.let(container::removeView)
+        overlay = null
+        val owner = holder ?: return
+        val error = owner.error
+        val view: View = if (error != null) {
+            LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setBackgroundColor(Color.WHITE)
+                contentDescription = getString(error)
+                addView(TextView(this@ShellActivity).apply {
+                    text = getString(error)
+                    textSize = 18f
+                    gravity = Gravity.CENTER
+                    setPadding(24, 24, 24, 24)
+                })
+                addView(Button(this@ShellActivity).apply {
+                    id = R.id.shell_retry_button
+                    setText(R.string.shell_retry)
+                    isEnabled = !owner.recovering
+                    setOnClickListener { owner.retry() }
+                })
+                addView(Button(this@ShellActivity).apply {
+                    id = R.id.shell_close_button
+                    setText(R.string.shell_close)
+                    setOnClickListener { finishAndRemoveTask() }
+                })
+            }
+        } else if (owner.loading) {
+            FrameLayout(this).apply {
+                contentDescription = getString(R.string.shell_loading)
+                addView(ProgressBar(this@ShellActivity), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+            }
+        } else return
+        overlay = view
+        container.addView(view, FrameLayout.LayoutParams(-1, -1))
+        view.announceForAccessibility(view.contentDescription)
     }
 
     override fun onRecord(app: ConfiguredApp) {
@@ -157,6 +218,7 @@ class ShellHolder(
     interface Host {
         fun onReady(webView: WebView)
         fun onRecord(app: ConfiguredApp)
+        fun onPresentationChanged()
         /** Finish the activity and its task. */
         fun onClosed(reason: CloseReason)
     }
@@ -171,6 +233,28 @@ class ShellHolder(
     private var appliedThirdPartyCookies: Boolean? = null
     /** Set once the launch URL is loading; record changes are applied from then on. */
     private var ready = false
+    private val timerHandler = Handler(Looper.getMainLooper())
+    private var timer: Runnable? = null
+    private var timerDeadline = 0L
+    private var timerRemaining = 30_000L
+    private var timerPaused = false
+    private var navigationIdentity = 0L
+    private var initialNavigation = true
+    private var failedUrl: String? = null
+    private var failedGet = false
+    private var currentUrl: String? = null
+    private var currentGet = false
+    private var requestObserved = false
+    private var lastSafeGet: String? = null
+    private var lastCommittedUrl: String? = null
+    private val knownSafeGets = mutableSetOf<String>()
+    private var rendererGone = false
+    var recovering = false
+        private set
+    var loading = false
+        private set
+    var error: Int? = null
+        private set
 
     var bound: BoundWebView? = null
         private set
@@ -189,6 +273,7 @@ class ShellHolder(
         }
         record?.let(host::onRecord)
         bound?.let { host.onReady(it.webView) }
+        host.onPresentationChanged()
         start()
     }
 
@@ -245,6 +330,7 @@ class ShellHolder(
         }
         if (closed != null) return
         if (app == null || !isCurrent(app)) return close(CloseReason.UNAVAILABLE)
+        record = app
         // Records are validated on save; this guards the one navigation this task performs.
         if (!app.launchUrl.startsWith("https://")) return close(CloseReason.FAILED)
         // No suspension from here on: nothing can close the shell before the load starts, and
@@ -254,8 +340,9 @@ class ShellHolder(
         applyThirdPartyCookies(app.allowThirdPartyCookies)
         if (closed != null) return
         ready = true
+        installClient(webView)
         host?.onReady(webView)
-        webView.loadUrl(app.launchUrl)
+        load(webView, app.launchUrl, initial = true)
     }
 
     /** Before attachment, the attach result decides; afterwards a stale record closes the shell. */
@@ -283,6 +370,7 @@ class ShellHolder(
     private fun close(reason: CloseReason) {
         if (closed != null) return
         closed = reason
+        stopTimer()
         unregister?.invoke()
         unregister = null
         release()
@@ -297,10 +385,195 @@ class ShellHolder(
     }
 
     override fun onCleared() {
+        stopTimer()
         scope.cancel()
         unregister?.invoke()
         unregister = null
         release()
+    }
+
+    /** Called by the credential flow while an external MyPass request is outstanding. */
+    fun pauseInitialTimer() {
+        if (timer == null || timerPaused) return
+        timerRemaining = (timerDeadline - SystemClock.uptimeMillis()).coerceAtLeast(0)
+        stopTimer()
+        timerPaused = true
+    }
+
+    fun resumeInitialTimer() {
+        if (!timerPaused) return
+        timerPaused = false
+        if (initialNavigation && error == null) startTimer(navigationIdentity)
+    }
+
+    private fun startTimer(identity: Long) {
+        timerDeadline = SystemClock.uptimeMillis() + timerRemaining
+        val callback = Runnable {
+            timer = null
+            if (identity != navigationIdentity || closed != null || error != null) return@Runnable
+            bound?.webView?.stopLoading()
+            fail(R.string.shell_timeout)
+        }
+        timer = callback
+        timerHandler.postDelayed(callback, timerRemaining)
+    }
+
+    private fun stopTimer() {
+        timer?.let(timerHandler::removeCallbacks)
+        timer = null
+    }
+
+    private fun load(webView: WebView, url: String, initial: Boolean) {
+        navigationIdentity++
+        currentUrl = url
+        currentGet = true
+        requestObserved = true
+        failedUrl = null
+        failedGet = false
+        error = null
+        rendererGone = false
+        initialNavigation = initial
+        loading = initial
+        stopTimer()
+        timerRemaining = 30_000L
+        timerPaused = false
+        host?.onPresentationChanged()
+        if (initial) startTimer(navigationIdentity)
+        webView.loadUrl(url)
+    }
+
+    private fun installClient(webView: WebView) {
+        webView.webViewClient = ShellWebViewClient(
+            onRequest = { url, get ->
+                if (bound?.webView === webView) {
+                    currentUrl = url
+                    currentGet = get
+                    requestObserved = true
+                }
+            },
+            onStarted = { url ->
+                if (bound?.webView === webView && error == null) {
+                    if (!requestObserved && !initialNavigation) currentGet = false
+                    currentUrl = url
+                    requestObserved = false
+                }
+            },
+            onCommit = { url ->
+                if (bound?.webView === webView && error == null) {
+                    stopTimer()
+                    initialNavigation = false
+                    loading = false
+                    if (url.startsWith("https://", true)) {
+                        lastCommittedUrl = url
+                        if (currentGet) knownSafeGets += url
+                        if (url in knownSafeGets) lastSafeGet = url
+                    }
+                    requestObserved = false
+                    host?.onPresentationChanged()
+                }
+            },
+            onFailure = { message -> if (bound?.webView === webView) fail(message) },
+            onTlsFailure = { url ->
+                if (bound?.webView === webView && url == currentUrl) fail(R.string.shell_tls_error)
+            },
+            onRendererGone = { rendererFailed(webView) },
+        )
+    }
+
+    private fun fail(message: Int) {
+        if (closed != null || error != null) return
+        stopTimer()
+        loading = false
+        failedUrl = currentUrl
+        failedGet = currentGet
+        error = message
+        host?.onPresentationChanged()
+    }
+
+    fun dismissError(): Boolean {
+        if (error == null || rendererGone || lastSafeGet == null) return false
+        error = null
+        bound?.webView?.let { webView ->
+            if (webView.url != null && webView.url != lastSafeGet) {
+                if (webView.canGoBack()) webView.goBack() else webView.loadUrl(lastSafeGet!!)
+            }
+        }
+        host?.onPresentationChanged()
+        return true
+    }
+
+    fun retry() {
+        if (error == null || closed != null || recovering) return
+        val launch = record?.launchUrl ?: return
+        val target = when {
+            rendererGone -> lastCommittedUrl ?: launch
+            initialNavigation -> launch
+            failedGet && failedUrl?.startsWith("https://", true) == true -> failedUrl!!
+            else -> lastSafeGet ?: launch
+        }
+        if (rendererGone || initialNavigation) {
+            recovering = true
+            host?.onPresentationChanged()
+            scope.launch {
+                try {
+                    val old = bound
+                    val result = services.profiles.createAppWebView(context, appId)
+                    if (result is AttachResult.Blocked) {
+                        when (result.reason) {
+                            AttachBlock.CLEARING, AttachBlock.MISSING_APP -> close(CloseReason.RETIRED)
+                            AttachBlock.INCOMPATIBLE -> close(CloseReason.INCOMPATIBLE)
+                            else -> showRecoveryFailure()
+                        }
+                        return@launch
+                    }
+                    val replacement = (result as AttachResult.Attached).bound
+                    if (closed != null || record?.let {
+                        it.profileState == ProfileState.ACTIVE &&
+                            replacement.profileName == ProfileNames.app(it.id, it.profileGeneration)
+                    } != true) {
+                        services.profiles.release(replacement)
+                        return@launch
+                    }
+                    bound = replacement
+                    old?.let {
+                        (it.webView.parent as? ViewGroup)?.removeView(it.webView)
+                        services.profiles.release(it)
+                    }
+                    ShellWebSettings.apply(replacement.webView, BuildConfig.DEBUG)
+                    appliedThirdPartyCookies = null
+                    applyThirdPartyCookies(record!!.allowThirdPartyCookies)
+                    installClient(replacement.webView)
+                    host?.onReady(replacement.webView)
+                    load(replacement.webView, target, initial = true)
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (_: Exception) {
+                    showRecoveryFailure()
+                } finally {
+                    recovering = false
+                    host?.onPresentationChanged()
+                }
+            }
+        } else bound?.webView?.let { load(it, target, initial = initialNavigation) }
+    }
+
+    private fun showRecoveryFailure() {
+        if (closed != null) return
+        error = R.string.shell_load_error
+        host?.onPresentationChanged()
+    }
+
+    private fun rendererFailed(webView: WebView): Boolean {
+        if (bound?.webView !== webView || closed != null) return true
+        stopTimer()
+        loading = false
+        rendererGone = true
+        error = R.string.shell_renderer_error
+        (webView.parent as? ViewGroup)?.removeView(webView)
+        services.profiles.release(bound!!)
+        bound = null
+        host?.onPresentationChanged()
+        return true
     }
 
     class Factory(
@@ -343,9 +616,42 @@ object ShellWebSettings {
  * Fail-closed baseline until the full navigation policy (A§9.4) lands: HTTPS stays in the shell
  * and nothing else is loaded or handed to another app.
  */
-private class ShellWebViewClient : WebViewClient() {
+private class ShellWebViewClient(
+    private val onRequest: (String, Boolean) -> Unit = { _, _ -> },
+    private val onStarted: (String) -> Unit = {},
+    private val onCommit: (String) -> Unit = {},
+    private val onFailure: (Int) -> Unit = {},
+    private val onTlsFailure: (String?) -> Unit = {},
+    private val onRendererGone: (WebView) -> Boolean = { true },
+) : WebViewClient() {
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-        !request.url.toString().startsWith("https://", ignoreCase = true)
+        if (!request.url.toString().startsWith("https://", ignoreCase = true)) true
+        else false.also {
+            if (request.isForMainFrame) onRequest(request.url.toString(), request.method == "GET")
+        }
+
+    override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+        onStarted(url)
+    }
+
+    override fun onPageCommitVisible(view: WebView, url: String) {
+        onCommit(url)
+    }
+
+    override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError?) {
+        if (request.isForMainFrame) {
+            onRequest(request.url.toString(), request.method == "GET")
+            onFailure(R.string.shell_load_error)
+        }
+    }
+
+    override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError?) {
+        handler.cancel()
+        onTlsFailure(error?.url)
+    }
+
+    override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean =
+        onRendererGone(view)
 }
 
 /** New windows are refused and site permissions denied until their tasks implement them. */

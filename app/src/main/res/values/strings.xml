@@ -14,6 +14,13 @@
     <string name="editor_unavailable">The editor is not available yet.</string>
     <string name="app_unavailable">This app is no longer available.</string>
     <string name="shell_start_failed">This app could not be opened. Try again.</string>
+    <string name="shell_loading">Loading app</string>
+    <string name="shell_load_error">The page could not be loaded.</string>
+    <string name="shell_tls_error">A secure connection could not be established.</string>
+    <string name="shell_timeout">The page took too long to load.</string>
+    <string name="shell_renderer_error">The page stopped working.</string>
+    <string name="shell_retry">Retry</string>
+    <string name="shell_close">Close</string>
     <string name="unknown_action">This action is unavailable.</string>
     <string name="mypass_available">MyPass available</string>
     <string name="mypass_unavailable">MyPass unavailable; you can still save and use this app</string>

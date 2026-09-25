@@ -1,4 +1,6 @@
 <resources>
+    <item name="shell_retry_button" type="id" />
+    <item name="shell_close_button" type="id" />
     <item name="app_list_scroll" type="id" />
     <item name="app_rows" type="id" />
     <item name="row_snapshot" type="id" />

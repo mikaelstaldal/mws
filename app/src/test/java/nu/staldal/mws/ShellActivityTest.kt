@@ -8,6 +8,12 @@ import android.content.ComponentName
 import android.net.Uri
 import android.webkit.WebSettings
 import android.webkit.WebView
+import android.webkit.WebResourceRequest
+import android.webkit.RenderProcessGoneDetail
+import android.webkit.SslErrorHandler
+import android.net.http.SslError
+import android.net.http.SslCertificate
+import android.widget.Button
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import androidx.room.Room
@@ -27,6 +33,7 @@ import org.robolectric.android.controller.ActivityController
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowLooper
 import org.robolectric.shadows.ShadowToast
+import java.util.concurrent.TimeUnit
 import org.robolectric.util.ReflectionHelpers
 
 @RunWith(RobolectricTestRunner::class)
@@ -241,6 +248,221 @@ class ShellActivityTest {
         assertTrue(activity.isFinishing)
     }
 
+    @Test fun initialLoadingAndTimeoutIgnoreLateCommitAndRetryUsesFreshView() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val first = awaitWebView(activity)
+        assertNotNull(container(activity).contentDescription ?: container(activity).getChildAt(1).contentDescription)
+        ShadowLooper.idleMainLooper(30, TimeUnit.SECONDS)
+        assertNotNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        Shadows.shadowOf(first).webViewClient.onPageCommitVisible(first, app.launchUrl)
+        assertNotNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        activity.findViewById<Button>(R.id.shell_retry_button).performClick()
+        await { backend.views.size == 2 }
+        val holder = ReflectionHelpers.getField<ShellHolder>(activity, "holder")
+        await { holder.bound != null || holder.closed != null }
+        assertNull("recovery closed: ${holder.closed}", holder.closed)
+        val second = awaitWebView(activity)
+        assertNotSame(first, second)
+        assertEquals(app.launchUrl, Shadows.shadowOf(second).lastLoadedUrl)
+        assertTrue(Shadows.shadowOf(first).wasDestroyCalled())
+        Shadows.shadowOf(first).webViewClient.onPageCommitVisible(first, app.launchUrl)
+        assertNotNull(container(activity).getChildAt(1))
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        Shadows.shadowOf(second).webViewClient.onPageCommitVisible(second, app.launchUrl)
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+    }
+
+    @Test fun initialTimerSpansRedirectsAndPausesForMyPass() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        val holder = ReflectionHelpers.getField<ShellHolder>(activity, "holder")
+        ShadowLooper.idleMainLooper(10, TimeUnit.SECONDS)
+        client.onPageStarted(view, "https://example.com/redirect", null)
+        holder.pauseInitialTimer()
+        ShadowLooper.idleMainLooper(30, TimeUnit.SECONDS)
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        holder.resumeInitialTimer()
+        ShadowLooper.idleMainLooper(20, TimeUnit.SECONDS)
+        assertNotNull(activity.findViewById<Button>(R.id.shell_retry_button))
+    }
+
+    @Test fun visibleCommitStopsInitialTimerAndCloseButtonFinishesErrorShell() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        ShadowLooper.idleMainLooper(30, TimeUnit.SECONDS)
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        Shadows.shadowOf(view).webViewClient.onReceivedError(view,
+            request("https://example.com/fail", "GET"), null)
+        activity.findViewById<Button>(R.id.shell_close_button).performClick()
+        assertTrue(activity.isFinishing)
+    }
+
+    @Test fun doubleRetryCreatesOnlyOneReplacement() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val first = awaitWebView(activity)
+        Shadows.shadowOf(first).webViewClient.onReceivedError(first,
+            request(app.launchUrl, "GET"), null)
+        val button = activity.findViewById<Button>(R.id.shell_retry_button)
+        button.performClick()
+        button.performClick()
+        await { backend.views.size == 2 }
+        settle()
+        assertEquals(2, backend.views.size)
+        assertSame(backend.views.last(), awaitWebView(activity))
+    }
+
+    @Test fun failedReplacementKeepsRetryAvailableWithLocalError() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val first = awaitWebView(activity)
+        backend.failCreateAfter = 1
+        Shadows.shadowOf(first).webViewClient.onReceivedError(first,
+            request(app.launchUrl, "GET"), null)
+        activity.findViewById<Button>(R.id.shell_retry_button).performClick()
+        await { activity.findViewById<Button>(R.id.shell_retry_button)?.isEnabled == true &&
+            container(activity).getChildAt(container(activity).childCount - 1).contentDescription ==
+            context.getString(R.string.shell_load_error) }
+        assertFalse(activity.isFinishing)
+        assertEquals(1, backend.views.size)
+    }
+
+    @Test fun errorOverlaySurvivesRotationAndBackClosesWithoutSafePage() {
+        val app = addApp()
+        val controller = controller(ShellActivity.intent(context, app.id))
+        val firstActivity = controller.get()
+        val view = awaitWebView(firstActivity)
+        Shadows.shadowOf(view).webViewClient.onReceivedError(view,
+            request(app.launchUrl, "GET"), null)
+        controller.recreate()
+        val recreated = controller.get()
+        assertNotNull(recreated.findViewById<Button>(R.id.shell_retry_button))
+        recreated.onBackPressedDispatcher.onBackPressed()
+        assertTrue(recreated.isFinishing)
+    }
+
+    @Test fun failedGetRetriesItButPostReturnsToLastCommittedGet() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        val getUrl = "https://example.com/next"
+        client.shouldOverrideUrlLoading(view, request(getUrl, "GET"))
+        client.onReceivedError(view, request(getUrl, "GET"), null)
+        activity.findViewById<Button>(R.id.shell_retry_button).performClick()
+        assertEquals(getUrl, Shadows.shadowOf(view).lastLoadedUrl)
+        client.onPageCommitVisible(view, getUrl)
+        val postUrl = "https://example.com/submit"
+        client.shouldOverrideUrlLoading(view, request(postUrl, "POST"))
+        client.onReceivedError(view, request(postUrl, "POST"), null)
+        activity.findViewById<Button>(R.id.shell_retry_button).performClick()
+        assertEquals(getUrl, Shadows.shadowOf(view).lastLoadedUrl)
+    }
+
+    @Test fun historyBackUpdatesLastSafeGetForPostFailure() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        val secondUrl = "https://example.com/second"
+        client.shouldOverrideUrlLoading(view, request(secondUrl, "GET"))
+        client.onPageStarted(view, secondUrl, null)
+        client.onPageCommitVisible(view, secondUrl)
+        client.onPageStarted(view, app.launchUrl, null)
+        client.onPageCommitVisible(view, app.launchUrl)
+        val postUrl = "https://example.com/submit"
+        client.onReceivedError(view, request(postUrl, "POST"), null)
+        activity.findViewById<Button>(R.id.shell_retry_button).performClick()
+        assertEquals(app.launchUrl, Shadows.shadowOf(view).lastLoadedUrl)
+    }
+
+    @Test fun backDismissesErrorBeforeNavigatingHistory() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        Shadows.shadowOf(view).webViewClient.onReceivedError(view,
+            request("https://example.com/fail", "GET"), null)
+        Shadows.shadowOf(view).setCanGoBack(true)
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        assertEquals(0, Shadows.shadowOf(view).goBackInvocations)
+        activity.onBackPressedDispatcher.onBackPressed()
+        assertEquals(1, Shadows.shadowOf(view).goBackInvocations)
+    }
+
+    @Test fun tlsFailureCancelsHandshakeAndShowsLocalError() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val handler = ReflectionHelpers.callConstructor(SslErrorHandler::class.java)
+        val certificate = ReflectionHelpers.newInstance(SslCertificate::class.java)
+        Shadows.shadowOf(view).webViewClient.onReceivedSslError(view, handler,
+            SslError(SslError.SSL_UNTRUSTED, certificate, app.launchUrl))
+        assertTrue(Shadows.shadowOf(handler).wasCancelCalled())
+        assertFalse(Shadows.shadowOf(handler).wasProceedCalled())
+        assertNotNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        assertEquals(context.getString(R.string.shell_tls_error),
+            container(activity).getChildAt(container(activity).childCount - 1).contentDescription)
+    }
+
+    @Test fun subresourceTlsFailureIsCancelledWithoutCoveringThePage() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        val handler = ReflectionHelpers.callConstructor(SslErrorHandler::class.java)
+        val certificate = ReflectionHelpers.newInstance(SslCertificate::class.java)
+        Shadows.shadowOf(view).webViewClient.onReceivedSslError(view, handler,
+            SslError(SslError.SSL_UNTRUSTED, certificate, "https://example.com/image.png"))
+        assertTrue(Shadows.shadowOf(handler).wasCancelCalled())
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+    }
+
+    @Test fun rendererCrashRebindsSameProfileOnRetry() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val first = awaitWebView(activity)
+        val committed = "https://example.com/current"
+        Shadows.shadowOf(first).webViewClient.shouldOverrideUrlLoading(first, request(committed, "GET"))
+        Shadows.shadowOf(first).webViewClient.onPageCommitVisible(first, committed)
+        assertTrue(Shadows.shadowOf(first).webViewClient.onRenderProcessGone(first,
+            object : RenderProcessGoneDetail() {
+                override fun didCrash() = true
+                override fun rendererPriorityAtExit() = 0
+            }))
+        assertTrue(Shadows.shadowOf(first).wasDestroyCalled())
+        activity.findViewById<Button>(R.id.shell_retry_button).performClick()
+        await { backend.views.size == 2 }
+        val holder = ReflectionHelpers.getField<ShellHolder>(activity, "holder")
+        await { holder.bound != null || holder.closed != null }
+        assertNull("recovery closed: ${holder.closed}", holder.closed)
+        val second = awaitWebView(activity)
+        assertEquals(committed, Shadows.shadowOf(second).lastLoadedUrl)
+        assertEquals(listOf(ProfileNames.app(app.id, 0), ProfileNames.app(app.id, 0)), backend.bound)
+    }
+
+    @Test fun clearAfterRendererCrashClosesShellBeforeRecovery() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onRenderProcessGone(view,
+            object : RenderProcessGoneDetail() {
+                override fun didCrash() = true
+                override fun rendererPriorityAtExit() = 0
+            })
+        assertEquals(ClearResult.Cleared, onMain { services.profiles.clear(app.id) })
+        assertTrue(activity.isFinishing)
+        assertEquals(1, backend.views.size)
+    }
+
     @Test fun simultaneousShellsAreIsolatedAndClearClosesOnlyTheTargetBeforeDeletion() {
         val first = addApp()
         val second = addApp()
@@ -319,9 +541,19 @@ class ShellActivityTest {
     private fun container(activity: ShellActivity) = activity.findViewById<FrameLayout>(R.id.shell_container)
 
     private fun awaitWebView(activity: ShellActivity): CountingWebView {
-        await { container(activity).childCount == 1 }
+        await { container(activity).childCount > 0 && container(activity).getChildAt(0) is CountingWebView }
         return container(activity).getChildAt(0) as CountingWebView
     }
+
+    private fun request(url: String, method: String) = object : WebResourceRequest {
+        override fun getUrl(): Uri = Uri.parse(url)
+        override fun isForMainFrame() = true
+        override fun isRedirect() = false
+        override fun hasGesture() = true
+        override fun getMethod() = method
+        override fun getRequestHeaders(): MutableMap<String, String> = mutableMapOf()
+    }
+
 
     private fun taskDescription(activity: ShellActivity): ActivityManager.TaskDescription? =
         ReflectionHelpers.getField(activity, "mTaskDescription")
@@ -365,6 +597,7 @@ class ShellActivityTest {
         val deleteCalls = mutableListOf<String>()
         val thirdParty = mutableMapOf<WebView, Boolean>()
         val views = mutableListOf<CountingWebView>()
+        var failCreateAfter: Int? = null
         var onDelete: (String) -> Unit = {}
         var onThirdParty: (WebView) -> Unit = {}
 
@@ -375,6 +608,7 @@ class ShellActivityTest {
         }
 
         override fun createBoundWebView(context: Context, name: String): WebView {
+            if (views.size >= (failCreateAfter ?: Int.MAX_VALUE)) throw IllegalStateException("bind failed")
             bound += name
             return CountingWebView(context).also { views += it }
         }
