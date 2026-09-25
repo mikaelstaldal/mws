@@ -34,6 +34,7 @@ This document records the technical design and constraints that implement
 
 ## 3. URL handling
 
+- `UrlPolicy` is the security authority. It uses `io.github.stephanebastian:whatwg-url:0.8.8` (WHATWG URL, Java 8) and `com.ibm.icu:icu4j:73.2` for a strict UTS #46 STD3 check on DNS hosts. Android `Uri` and `java.net.URI` are not used for security decisions.
 - Scheme-less input is recognized **before** parsing as authority[path][query][fragment]. `https://` is prepended, then the pinned WHATWG parser runs.
 - Host processing: UTS #46 non-transitional IDNA with STD3 rules. Recognized Unicode dot separators are mapped before processing. IDNA errors are rejected. The ASCII host is lowercased and exactly one terminal DNS dot is removed.
 - Serialization: an empty HTTPS path becomes `/`; default ports are removed; non-default decimal ports are kept; the parser's percent-encoding normalization is applied. IPv4 and IPv6 literals use the parser's canonical form.

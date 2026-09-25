@@ -233,6 +233,8 @@ dependencies {
     kapt(libs.room.compiler)
     implementation(libs.webkit)
     implementation(libs.androidsvg)
+    implementation(libs.whatwg.url)
+    implementation(libs.icu4j)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)

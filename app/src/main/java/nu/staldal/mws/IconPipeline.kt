@@ -8,7 +8,6 @@ import android.graphics.Path
 import android.graphics.Rect
 import android.graphics.RectF
 import android.graphics.drawable.Drawable
-import android.net.Uri
 import androidx.core.content.ContextCompat
 import java.io.File
 import java.io.FileOutputStream
@@ -27,12 +26,11 @@ object IconPipeline {
     /** Run on a worker thread. A failed fetch or decode falls through to the next ranked URL. */
     fun select(candidates: List<IconCandidate>, fetcher: IconFetcher): SelectedIcon? {
         for (candidate in IconSelection.ranked(candidates)) {
-            val uri = Uri.parse(candidate.url)
-            if (uri.scheme != "https" || uri.host.isNullOrBlank() ||
-                candidate.url.toByteArray(Charsets.UTF_8).size > 8192) continue
-            val bytes = try { fetcher.fetch(candidate) } catch (_: Exception) { null } ?: continue
+            val url = UrlPolicy.parseHttps(candidate.url) ?: continue
+            val canonicalCandidate = candidate.copy(url = url.serialized)
+            val bytes = try { fetcher.fetch(canonicalCandidate) } catch (_: Exception) { null } ?: continue
             val bitmap = IconDecoder.decode(bytes, candidate.type) ?: continue
-            return SelectedIcon(candidate, bitmap)
+            return SelectedIcon(canonicalCandidate, bitmap)
         }
         return null
     }

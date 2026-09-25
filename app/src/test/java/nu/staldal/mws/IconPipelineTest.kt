@@ -17,6 +17,17 @@ import java.nio.ByteOrder
 @Config(sdk = [28])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class IconPipelineTest {
+    @Test fun fetchesCanonicalUrl() {
+        var fetched = ""
+        val selected = IconPipeline.select(listOf(icon("ignored", IconCandidate.Source.PAGE)
+            .copy(url = "https://EXAMPLE.com./icon.png")), IconFetcher {
+            fetched = it.url
+            png(64, 64)
+        })
+        assertEquals("https://example.com/icon.png", fetched)
+        assertEquals(fetched, selected?.candidate?.url)
+    }
+
     @Test fun rankingHonorsSourceSizeAndOrder() {
         val candidates = listOf(
             icon("page", IconCandidate.Source.PAGE, "any"),
