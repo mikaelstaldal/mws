@@ -17,3 +17,7 @@ Implementation tasks are tracked as issues in AWB workspace `mws`. Each task ref
 
 No Gradle wrapper — uses the system `gradle` command. `local.properties` must
 point `sdk.dir` at the Android SDK.
+
+## Testing
+
+You don't have access to test on a device or emulator. Ask the user to do that if necessary.
