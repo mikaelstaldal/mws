@@ -326,6 +326,25 @@ class ProfileManagerTest {
         assertFalse(store.hasDiscoveryProfile(second.profileId))
     }
 
+    @Test fun selfTestProfileIsDeletedOnlyInItsFreshProbeProcess() = runBlocking {
+        val firstProcess = manager()
+        val profile = firstProcess.createSelfTestProfile(processProbe = true)
+        assertTrue(store.hasDiscoveryProfile(profile.profileId))
+        backend.inUse += profile.profileName
+        assertEquals(SelfTestDeletion.Deferred, firstProcess.deleteSelfTestProfile(profile))
+
+        // Startup maintenance in the app process must not delete the child data directory's name.
+        manager().startupMaintenance()
+        assertTrue(store.hasDiscoveryProfile(profile.profileId))
+
+        backend.inUse.clear() // The probe process died; the same data directory is now unloaded.
+        val nextProcess = manager()
+        val adopted = nextProcess.adoptSelfTestProfile(profile.profileId)
+        assertEquals(SelfTestDeletion.Deleted, nextProcess.deleteSelfTestProfile(adopted))
+        nextProcess.finishSelfTestProfile(adopted)
+        assertFalse(store.hasDiscoveryProfile(profile.profileId))
+    }
+
     @Test fun webViewsAreBoundBeforeFirstLoadWithThirdPartyCookieSetting() = runBlocking {
         val app = newApp()
         repository.update(app.copy(allowThirdPartyCookies = true))
@@ -408,6 +427,8 @@ class ProfileManagerTest {
             failAfterDelete?.let { throw it }
             return result
         }
+
+        override fun profileExists(name: String): Boolean = name !in deleted
 
         override fun createBoundWebView(context: Context, name: String): WebView {
             onBind(name)

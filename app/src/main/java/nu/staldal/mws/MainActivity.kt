@@ -16,6 +16,7 @@ import androidx.core.view.ViewCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -30,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var emptyState: LinearLayout
     private lateinit var listError: TextView
     private lateinit var compatibilityEntry: View
+    private lateinit var progress: TextView
     private lateinit var iconStore: IconStore
     private var observation: Job? = null
 
@@ -46,7 +48,18 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
-        compatibilityEntry.visibility = if (compatibility.current().compatible) View.GONE else View.VISIBLE
+        compatibilityEntry.visibility = View.GONE
+        lifecycleScope.launch {
+            progress.setText(R.string.provider_self_test_running)
+            progress.visibility = View.VISIBLE
+            var failed = false
+            try { ShellServices.shared(this@MainActivity).awaitStartup() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { failed = true }
+            progress.visibility = if (failed) View.VISIBLE else View.GONE
+            if (failed) progress.setText(R.string.provider_check_failed)
+            compatibilityEntry.visibility = if (compatibility.current().compatible) View.GONE else View.VISIBLE
+        }
         observation = lifecycleScope.launch {
             repository.apps.catch { listError.visibility = View.VISIBLE }
                 .collect { apps ->
@@ -102,6 +115,11 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { startActivity(Intent(this@MainActivity, ProviderErrorActivity::class.java)) }
         }
         column.addView(compatibilityEntry)
+        progress = TextView(this).apply {
+            setText(R.string.provider_self_test_running)
+            visibility = View.GONE
+        }
+        column.addView(progress)
         listError = TextView(this).apply {
             id = R.id.list_error
             setText(R.string.list_error)

@@ -16,16 +16,31 @@ class ShellServices(
     val shells: LiveShellRegistry,
     val profiles: ProfileManager,
     val icons: IconStore,
+    private val selfTest: (suspend () -> Unit)? = null,
 ) {
     private val startupLock = Mutex()
     private var startup: StartupReport? = null
+    private var startupCompatible = false
+    private var selfTestAttempted = false
+    private var selfTestKey: ProviderKey? = null
 
     /**
      * A§5.3: maintenance runs once per process, before the first profile attaches. A failed run
      * is retried by the next caller.
      */
     suspend fun awaitStartup(): StartupReport = startupLock.withLock {
-        startup ?: profiles.startupMaintenance().also { startup = it }
+        val currentKey = compatibility.current().key
+        if (!selfTestAttempted || currentKey != selfTestKey) {
+            selfTest?.invoke()
+            selfTestKey = currentKey
+            selfTestAttempted = true
+        }
+        val decision = compatibility.current()
+        if (startup == null || (!startupCompatible && decision.compatible)) {
+            startup = profiles.startupMaintenance()
+            startupCompatible = decision.compatible
+        }
+        checkNotNull(startup)
     }
 
     companion object {
@@ -43,16 +58,22 @@ class ShellServices(
 
         private fun create(context: Context): ShellServices {
             val repository = ConfigurationRepository(ConfigurationDatabase.shared(context))
-            val compatibility = ProviderCompatibility(AndroidProviderSnapshotSource(context),
-                ProviderSelfTestStore { null }, debugOverride = BuildConfig.DEBUG_PROVIDER_OVERRIDE)
+            val maintenance = MaintenanceStore(context)
+            val source = AndroidProviderSnapshotSource(context)
+            val compatibility = ProviderCompatibility(source,
+                ProviderSelfTestStore { key -> SelfTestEncoding.decode(key, maintenance.selfTest()) },
+                debugOverride = BuildConfig.DEBUG_PROVIDER_OVERRIDE)
             val icons = IconStore(context)
             val shells = LiveShellRegistry()
-            val profiles = ProfileManager(repository, MaintenanceStore(context), compatibility,
+            val profiles = ProfileManager(repository, maintenance, compatibility,
                 AndroidWebProfileBackend(), shells, object : AppNativeData {
                     override fun deleteIcons(appId: String) = icons.delete(appId)
                     override fun widgetsChanged() {} // Widgets are not implemented yet.
                 })
-            return ShellServices(repository, compatibility, shells, profiles, icons)
+            val runner = ProviderSelfTestRunner(source, maintenance, listOf(
+                IsolationProbe(context, profiles), DeletionProbe(context)))
+            return ShellServices(repository, compatibility, shells, profiles, icons,
+                { runner.runIfNeeded() })
         }
     }
 }

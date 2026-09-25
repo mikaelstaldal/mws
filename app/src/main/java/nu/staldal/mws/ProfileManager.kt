@@ -41,6 +41,9 @@ interface WebProfileBackend {
     /** `true` deleted, `false` absent. Throws [IllegalStateException] while loaded in this process. */
     fun deleteProfile(name: String): Boolean
 
+    /** Checks the persisted profile registry without loading or creating the profile. */
+    fun profileExists(name: String): Boolean
+
     /** Returns a WebView bound to [name] that has not loaded anything yet. */
     fun createBoundWebView(context: Context, name: String): WebView
 
@@ -51,6 +54,9 @@ interface WebProfileBackend {
 /** The single place where WebViews are constructed and bound (checked by scripts/check-security.py). */
 class AndroidWebProfileBackend : WebProfileBackend {
     override fun deleteProfile(name: String): Boolean = ProfileStore.getInstance().deleteProfile(name)
+
+    override fun profileExists(name: String): Boolean =
+        name in ProfileStore.getInstance().allProfileNames
 
     override fun createBoundWebView(context: Context, name: String): WebView {
         check(name != Profile.DEFAULT_PROFILE_NAME)
@@ -156,6 +162,14 @@ sealed interface DeletionOutcome {
     data class Failed(val cause: Throwable) : DeletionOutcome
 }
 
+/** The probe must distinguish accepted deletion from a profile that never existed. */
+internal sealed interface SelfTestDeletion {
+    data object Deleted : SelfTestDeletion
+    data object Absent : SelfTestDeletion
+    data object Deferred : SelfTestDeletion
+    data class Failed(val cause: Throwable) : SelfTestDeletion
+}
+
 data class StartupReport(
     val journalFailures: Map<String, Throwable>,
     val pendingTombstones: List<String>,
@@ -209,8 +223,78 @@ class ProfileManager(
     /** Disposable profiles registered by this process and not yet retired. Guarded by [lifecycle]. */
     private val openDisposables = mutableSetOf<String>()
 
+    /** Self-test is the sole pre-compatibility profile access path. The caller first checks
+     * MULTI_PROFILE; names are durable so a crash can be cleaned up on a later compatible start. */
+    suspend fun createSelfTestProfile(processProbe: Boolean = false): DisposableProfile = lifecycle.withLock {
+        val id = if (processProbe) "selftest-${UUID.randomUUID()}" else UUID.randomUUID().toString()
+        val profile = DisposableProfile(id)
+        withContext(io) { maintenance.registerDiscoveryProfile(DiscoveryProfile(profile.profileId, clock())) }
+        openDisposables += profile.profileId
+        profile
+    }
+
+    /** A fresh probe process adopts only a name that phase one registered durably. */
+    suspend fun adoptSelfTestProfile(profileId: String): DisposableProfile = lifecycle.withLock {
+        require(profileId.startsWith("selftest-") && ProfileNames.isOpaqueId(profileId))
+        check(withContext(io) { maintenance.hasDiscoveryProfile(profileId) })
+        openDisposables += profileId
+        DisposableProfile(profileId)
+    }
+
+    /** Child-process leftovers are cleaned only in that process's WebView data directory. */
+    suspend fun cleanupStaleSelfTestProfiles(): List<String> = lifecycle.withLock {
+        val deleted = mutableListOf<String>()
+        for (record in withContext(io) { maintenance.discoveryProfiles() }) {
+            if (!record.profileId.startsWith("selftest-")) continue
+            if (deleteNamed(ProfileNames.disposable(record.profileId)) == DeletionOutcome.Deleted) {
+                deleted += record.profileId
+            }
+        }
+        deleted
+    }
+
+    suspend fun finishStaleSelfTestProfiles(deleted: List<String>) = lifecycle.withLock {
+        for (id in deleted) withContext(io) { maintenance.deleteDiscoveryProfile(id) }
+    }
+
+    suspend fun createSelfTestWebView(context: Context, profile: DisposableProfile): BoundWebView =
+        lifecycle.withLock {
+            check(profile.profileId in openDisposables)
+            check(withContext(io) { maintenance.hasDiscoveryProfile(profile.profileId) })
+            withContext(main) { bind(context, profile.profileName) }
+        }
+
+    suspend fun selfTestProfileExists(profile: DisposableProfile): Boolean = lifecycle.withLock {
+        check(profile.profileId in openDisposables)
+        withContext(main) { backend.profileExists(profile.profileName) }
+    }
+
+    /** Keep the registration until the probe has checked deletion and any recreation. */
+    internal suspend fun deleteSelfTestProfile(profile: DisposableProfile): SelfTestDeletion = lifecycle.withLock {
+        check(profile.profileId in openDisposables)
+        withContext(main) { destroyLive(profile.profileName) }
+        withContext(main) {
+            try {
+                if (backend.deleteProfile(profile.profileName)) SelfTestDeletion.Deleted
+                else SelfTestDeletion.Absent
+            } catch (_: IllegalStateException) {
+                SelfTestDeletion.Deferred
+            } catch (failure: Exception) {
+                SelfTestDeletion.Failed(failure)
+            }
+        }
+    }
+
+    suspend fun finishSelfTestProfile(profile: DisposableProfile) {
+        val outcome = deleteSelfTestProfile(profile)
+        lifecycle.withLock { openDisposables -= profile.profileId }
+        if (outcome == SelfTestDeletion.Deleted || outcome == SelfTestDeletion.Absent) {
+            withContext(io) { maintenance.deleteDiscoveryProfile(profile.profileId) }
+        }
+    }
+
     /**
-     * A§5.3: runs at every process start before any profile is loaded. Journal intents resume
+     * A§5.3: runs before any app profile is loaded. Journal intents resume
      * first, so a tombstone is never retried while its removal can still be adopted.
      */
     suspend fun startupMaintenance(): StartupReport = lifecycle.withLock {
@@ -226,6 +310,7 @@ class ProfileManager(
                 }
             }
             for (record in withContext(io) { maintenance.discoveryProfiles() }) {
+                if (record.profileId.startsWith("selftest-")) continue
                 if (deleteNamed(ProfileNames.disposable(record.profileId)) == DeletionOutcome.Deleted) {
                     withContext(io) { maintenance.deleteDiscoveryProfile(record.profileId) }
                 }

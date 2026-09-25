@@ -9,14 +9,15 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.google.android.material.button.MaterialButton
 import androidx.appcompat.app.AppCompatActivity
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.CancellationException
 
 class ProviderErrorActivity : AppCompatActivity() {
     private lateinit var message: TextView
     private lateinit var settingsButton: MaterialButton
-    private val compatibility by lazy {
-        ProviderCompatibility(AndroidProviderSnapshotSource(this), ProviderSelfTestStore { null },
-            debugOverride = BuildConfig.DEBUG_PROVIDER_OVERRIDE)
-    }
+    private val services by lazy { ShellServices.shared(this) }
+    private val compatibility get() = services.compatibility
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -45,6 +46,21 @@ class ProviderErrorActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        message.setText(R.string.provider_self_test_running)
+        settingsButton.isEnabled = false
+        lifecycleScope.launch {
+            try {
+                services.awaitStartup()
+                showDecision()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                message.setText(R.string.provider_check_failed)
+            }
+        }
+    }
+
+    private fun showDecision() {
         val decision = compatibility.current()
         if (decision.compatible) {
             finish()

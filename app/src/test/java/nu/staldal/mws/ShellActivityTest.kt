@@ -607,6 +607,8 @@ class ShellActivityTest {
             return true
         }
 
+        override fun profileExists(name: String): Boolean = true
+
         override fun createBoundWebView(context: Context, name: String): WebView {
             if (views.size >= (failCreateAfter ?: Int.MAX_VALUE)) throw IllegalStateException("bind failed")
             bound += name

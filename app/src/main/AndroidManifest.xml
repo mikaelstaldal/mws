@@ -32,5 +32,7 @@
             android:documentLaunchMode="intoExisting"
             android:exported="false" />
         <activity android:name=".ProviderErrorActivity" android:exported="false" />
+        <service android:name=".SelfTestProcessService" android:process=":selftest"
+            android:exported="false" />
     </application>
 </manifest>
