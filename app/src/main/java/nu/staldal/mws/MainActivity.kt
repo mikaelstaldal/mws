@@ -24,7 +24,6 @@ import kotlinx.coroutines.withContext
 /** The list observes the canonical order; configuration changes appear without restarting. */
 class MainActivity : AppCompatActivity() {
     private lateinit var myPassClient: MyPassClient
-    private lateinit var database: ConfigurationDatabase
     private lateinit var repository: ConfigurationRepository
     private lateinit var compatibility: ProviderCompatibility
     private lateinit var rows: LinearLayout
@@ -38,13 +37,10 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         myPassClient = MyPassClient(this)
         myPassClient.restoreIdentity(savedInstanceState)
-        database = ConfigurationDatabase.shared(this)
-        repository = ConfigurationRepository(database)
-        iconStore = IconStore(this)
-        compatibility = ProviderCompatibility(
-            AndroidProviderSnapshotSource(this), ProviderSelfTestStore { null },
-            debugOverride = BuildConfig.DEBUG_PROVIDER_OVERRIDE,
-        )
+        val services = ShellServices.shared(this)
+        repository = services.repository
+        iconStore = services.icons
+        compatibility = services.compatibility
         buildScreen()
     }
 
@@ -180,7 +176,7 @@ class MainActivity : AppCompatActivity() {
                     R.string.clearing_explanation, Toast.LENGTH_LONG).show()
                 else if (!compatibility.current().compatible) {
                     startActivity(Intent(this@MainActivity, ProviderErrorActivity::class.java))
-                } else openPlaceholder(PlaceholderActivity.ACTION_SHELL, app.id)
+                } else startActivity(ShellActivity.intent(this@MainActivity, app.id))
             }
             setOnLongClickListener {
                 openPlaceholder(PlaceholderActivity.ACTION_EDIT, app.id)

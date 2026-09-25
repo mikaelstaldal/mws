@@ -8,6 +8,8 @@ import android.database.sqlite.SQLiteOutOfMemoryException
 import android.database.sqlite.SQLiteReadOnlyDatabaseException
 import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 sealed interface ConfigurationWriteResult {
     data object Success : ConfigurationWriteResult
@@ -22,6 +24,10 @@ class ConfigurationRepository(private val database: ConfigurationDatabase) {
     private val dao = database.apps()
 
     val apps: Flow<List<ConfiguredApp>> = dao.observeOrdered()
+
+    /** Emits the current record, then every change to it; `null` once it is removed. */
+    fun observe(id: String): Flow<ConfiguredApp?> =
+        apps.map { list -> list.firstOrNull { it.id == id } }.distinctUntilChanged()
 
     suspend fun ordered(): List<ConfiguredApp> = dao.ordered()
     suspend fun get(id: String): ConfiguredApp? = dao.get(id)

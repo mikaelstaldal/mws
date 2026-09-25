@@ -12,7 +12,8 @@
     <string name="provider_error_entry">WebView provider incompatible. View details and update options.</string>
     <string name="add_unavailable">The add screen is not available yet.</string>
     <string name="editor_unavailable">The editor is not available yet.</string>
-    <string name="shell_unavailable">The web app shell is not available yet.</string>
+    <string name="app_unavailable">This app is no longer available.</string>
+    <string name="shell_start_failed">This app could not be opened. Try again.</string>
     <string name="unknown_action">This action is unavailable.</string>
     <string name="mypass_available">MyPass available</string>
     <string name="mypass_unavailable">MyPass unavailable; you can still save and use this app</string>

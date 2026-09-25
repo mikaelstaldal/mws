@@ -126,6 +126,16 @@ class ProfileManagerTest {
         assertEquals(ProfileNames.app(app.id, 3), next.profileName)
     }
 
+    @Test fun unresolvedJournalOperationBlocksAttachment() = runBlocking {
+        val app = newApp()
+        val manager = started()
+        val entry = store.begin(OperationIntent(OperationType.UPDATE_URL, app.id, 0, 1), 1)
+        assertEquals(AttachResult.Blocked(AttachBlock.PENDING_OPERATION), attach(manager, app.id))
+        assertTrue(backend.bound.isEmpty())
+        store.completeStep(entry.id, 0)
+        assertTrue(attach(manager, app.id) is AttachResult.Attached)
+    }
+
     @Test fun processDeathBeforeDeletionResumesAtStartupBeforeAnyLoad() = runBlocking {
         val app = newApp()
         repository.reserveNextGeneration(app.id) // died right after step 1

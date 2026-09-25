@@ -12,4 +12,5 @@
     <item name="app_url_text" type="id" />
     <item name="clearing_label" type="id" />
     <item name="provider_error_message" type="id" />
+    <item name="shell_container" type="id" />
 </resources>

@@ -25,6 +25,12 @@
             </intent-filter>
         </activity>
         <activity android:name=".PlaceholderActivity" android:exported="false" />
+        <!-- One document task per app ID data URI (A§9.1); no dynamic task affinities. -->
+        <activity
+            android:name=".ShellActivity"
+            android:autoRemoveFromRecents="true"
+            android:documentLaunchMode="intoExisting"
+            android:exported="false" />
         <activity android:name=".ProviderErrorActivity" android:exported="false" />
     </application>
 </manifest>

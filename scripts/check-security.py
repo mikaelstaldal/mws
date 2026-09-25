@@ -10,7 +10,8 @@ patterns = {
     "SSL error callback": re.compile(r"\bonReceivedSslError\b"),
     "custom hostname verifier": re.compile(r"\bsetHostnameVerifier\b|\bHostnameVerifier\b"),
     "custom trust manager": re.compile(r"\bX509TrustManager\b|\bTrustManagerFactory\b"),
-    "WebView debugging": re.compile(r"\bsetWebContentsDebuggingEnabled\b"),
+    # Only switching debugging off (A§4) is allowed.
+    "WebView debugging": re.compile(r"\bsetWebContentsDebuggingEnabled\s*\((?!\s*false\s*\))"),
     "cleartext exception": re.compile(r"cleartextTrafficPermitted\s*=\s*['\"]true['\"]"),
     "cleartext manifest flag": re.compile(r"usesCleartextTraffic\s*=\s*['\"]true['\"]"),
     "user certificate trust": re.compile(r"<certificates\s+src\s*=\s*['\"]user['\"]"),

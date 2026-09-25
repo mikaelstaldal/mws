@@ -19,6 +19,8 @@ object ProfileNames {
     private const val APP_PREFIX = "mws-app-"
     private const val DISPOSABLE_PREFIX = "mws-disposable-"
 
+    fun isOpaqueId(id: String): Boolean = OPAQUE_ID.matches(id)
+
     fun app(appId: String, generation: Long): String {
         require(OPAQUE_ID.matches(appId)) { "App ID is not opaque" }
         require(generation >= 0) { "Negative generation" }
@@ -118,7 +120,9 @@ data class DisposableProfile(val profileId: String) {
     val profileName: String get() = ProfileNames.disposable(profileId)
 }
 
-enum class AttachBlock { STARTUP_PENDING, INCOMPATIBLE, MISSING_APP, CLEARING, NOT_REGISTERED }
+enum class AttachBlock { STARTUP_PENDING, INCOMPATIBLE, MISSING_APP, CLEARING, NOT_REGISTERED,
+    /** A journal operation for the app, such as an origin change, has not completed. */
+    PENDING_OPERATION }
 
 sealed interface AttachResult {
     data class Attached(val bound: BoundWebView) : AttachResult
@@ -238,7 +242,10 @@ class ProfileManager(
         }
     }
 
-    /** A§9.1: only an existing, ACTIVE, non-tombstoned app attaches, and only its active generation. */
+    /**
+     * A§9.1: only an existing, ACTIVE, non-tombstoned app without an unresolved journal operation
+     * attaches, and only its active generation.
+     */
     suspend fun createAppWebView(context: Context, appId: String): AttachResult = lifecycle.withLock {
         if (!startupComplete) return@withLock AttachResult.Blocked(AttachBlock.STARTUP_PENDING)
         if (!compatibility.mayAccessProfile()) return@withLock AttachResult.Blocked(AttachBlock.INCOMPATIBLE)
@@ -250,6 +257,9 @@ class ProfileManager(
         if (withContext(io) { maintenance.hasTombstone(name) }) {
             return@withLock AttachResult.Blocked(AttachBlock.MISSING_APP)
         }
+        if (withContext(io) { maintenance.pendingOperations().any { it.intent.appId == appId } }) {
+            return@withLock AttachResult.Blocked(AttachBlock.PENDING_OPERATION)
+        }
         withContext(main) {
             val bound = bind(context, name)
             backend.setThirdPartyCookies(bound.webView, app.allowThirdPartyCookies)
@@ -257,15 +267,14 @@ class ProfileManager(
         }
     }
 
-    /** Applies a changed third-party-cookie setting to a live WebView without reloading. */
-    suspend fun applyThirdPartyCookies(bound: BoundWebView, allow: Boolean) = withContext(main) {
+    /** Applies a changed third-party-cookie setting to a live WebView without reloading. Main thread only. */
+    fun applyThirdPartyCookies(bound: BoundWebView, allow: Boolean) {
         backend.setThirdPartyCookies(bound.webView, allow)
     }
 
-    /** Destroys a WebView obtained from this manager. */
-    suspend fun release(bound: BoundWebView) = withContext(main) {
-        live[bound.profileName]?.remove(bound.webView)
-        bound.webView.destroy()
+    /** Destroys a WebView obtained from this manager. Main thread only; repeated calls are harmless. */
+    fun release(bound: BoundWebView) {
+        if (live[bound.profileName]?.remove(bound.webView) == true) bound.webView.destroy()
     }
 
     /** Clear and Retry share one path: an existing reservation is resumed, never renewed. */

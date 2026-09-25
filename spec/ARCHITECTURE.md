@@ -63,7 +63,7 @@ This document records the technical design and constraints that implement
 - Every WebView (shell, new-window probe, discovery, self-test) is bound to its profile via `WebViewCompat.setProfile` **before its first load**. The default/global profile is never used by any WebView, cookie access or storage access. No `CookieManager`, storage manager, cache, service-worker controller or HTTP-auth store is treated as global.
 - The third-party-cookie setting is applied to the app's profile cookie manager. It affects subsequent requests without a reload.
 - Opening one app never initializes or attaches another app's profile.
-- `ProfileManager` is the only code that constructs a WebView, calls `WebViewCompat.setProfile` or touches `ProfileStore`, through `AndroidWebProfileBackend`. It attaches only after startup maintenance, while compatible, to an existing `ACTIVE` record's active generation that has no tombstone. `scripts/check-security.py` rejects WebView construction, profile binding or `DEFAULT_PROFILE_NAME` elsewhere, layout WebViews, `WebViewDatabase`, and every global `getInstance()` of `CookieManager`, `WebStorage`, `GeolocationPermissions` and `ServiceWorkerController`.
+- `ProfileManager` is the only code that constructs a WebView, calls `WebViewCompat.setProfile` or touches `ProfileStore`, through `AndroidWebProfileBackend`. It attaches only after startup maintenance, while compatible, to an existing `ACTIVE` record's active generation that has no tombstone and no unresolved journal operation for the app. `scripts/check-security.py` rejects WebView construction, profile binding or `DEFAULT_PROFILE_NAME` elsewhere, layout WebViews, `WebViewDatabase`, and every global `getInstance()` of `CookieManager`, `WebStorage`, `GeolocationPermissions` and `ServiceWorkerController`.
 - Live shells register with `LiveShellRegistry`. Clear and Remove call its `closeAll(appId)` hook before profile retirement, then destroy any remaining WebViews the manager handed out for the retiring names.
 
 ### 5.2 Profile state machine
@@ -254,15 +254,16 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 
 ### 9.1 Task model
 
-- `ShellActivity` is launched only by stable app ID, carried as a data URI on the base intent. It never accepts an untrusted raw URL intent.
+- `ShellActivity` is launched only by stable app ID, carried as a data URI on the base intent. It never accepts an untrusted raw URL intent. The activity is not exported; the intent has action `nu.staldal.mws.action.OPEN_APP` and data exactly `mws-app:<app ID>`, and anything else finishes the activity before any profile work.
 - Document-centric tasks (`documentLaunchMode` / `FLAG_ACTIVITY_NEW_DOCUMENT` with the app-ID data URI), plus `onNewIntent`, find and bring forward the existing task. Dynamically generated task affinities are not used. There is at most one live shell per app.
 - `setTaskDescription` sets the app's name, icon and theme color. The shell observes the app record and refreshes this on resume or change.
-- Every (re)created shell validates the stable ID and `ACTIVE` state before attaching a profile.
+- Every (re)created shell validates the stable ID and `ACTIVE` state before attaching a profile. It waits for startup maintenance (once per process, shared through the process-wide service graph), then registers its close hook with `LiveShellRegistry`, then asks `ProfileManager` to attach.
 - An origin change, clear or remove finishes the activity and task, closing the WebView, **before** profile retirement.
 
 ### 9.2 Lifecycle
 
-- The live WebView is retained across configuration changes through a lifecycle-aware holder. WebView state bundles are never persisted, and navigation URLs are kept only in memory.
+- The live WebView is retained across configuration changes through a lifecycle-aware holder (a `ViewModel`; the WebView's `MutableContextWrapper` is re-pointed at the current activity). WebView state bundles are never persisted, and navigation URLs are kept only in memory.
+- The holder observes the app record: a third-party-cookie change is applied to the live profile without a reload, name/icon/theme changes refresh the task description, and a removed record or a changed generation closes the shell.
 - After process death, a new WebView loads the resolved launch URL.
 - Renderer crash (`onRenderProcessGone`): dispose the WebView and create a new one on the same active profile. A concurrent `CLEARING` or removal cancels recovery.
 
