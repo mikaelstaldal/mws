@@ -12,6 +12,7 @@
     <string name="provider_error_entry">WebView provider incompatible. View details and update options.</string>
     <string name="add_unavailable">The add screen is not available yet.</string>
     <string name="editor_unavailable">The editor is not available yet.</string>
+    <string name="discovery_credentialless_warning">Authenticated site details may be unavailable during discovery.</string>
     <string name="app_unavailable">This app is no longer available.</string>
     <string name="shell_start_failed">This app could not be opened. Try again.</string>
     <string name="shell_loading">Loading app</string>
