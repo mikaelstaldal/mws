@@ -24,6 +24,8 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -185,7 +187,15 @@ class MultiWidgetConfigureActivity : AppCompatActivity() {
             }
             val root = LinearLayout(this@MultiWidgetConfigureActivity).apply {
                 orientation = LinearLayout.VERTICAL
-                setPadding(24, 24, 24, 24)
+            }
+            val spacing = (16 * resources.displayMetrics.density).toInt()
+            root.setPadding(spacing, spacing, spacing, spacing)
+            ViewCompat.setOnApplyWindowInsetsListener(root) { view, insets ->
+                val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or
+                    WindowInsetsCompat.Type.displayCutout())
+                view.setPadding(spacing + bars.left, spacing + bars.top,
+                    spacing + bars.right, spacing + bars.bottom)
+                insets
             }
             root.addView(TextView(this@MultiWidgetConfigureActivity).apply {
                 setText(R.string.widget_configure); textSize = 20f
@@ -245,6 +255,7 @@ class MultiWidgetConfigureActivity : AppCompatActivity() {
                 }
             })
             setContentView(root)
+            ViewCompat.requestApplyInsets(root)
         }
     }
 }
