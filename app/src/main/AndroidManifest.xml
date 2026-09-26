@@ -38,7 +38,8 @@
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
         </activity>
-        <activity android:name=".PlaceholderActivity" android:exported="false" />
+        <activity android:name=".EditorActivity" android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <!-- One document task per app ID data URI (A§9.1); no dynamic task affinities. -->
         <activity
             android:name=".ShellActivity"

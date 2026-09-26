@@ -192,7 +192,7 @@ class MainActivity : AppCompatActivity() {
             addView(com.google.android.material.button.MaterialButton(this@MainActivity).apply {
                 id = R.id.empty_add
                 setText(R.string.add_web_app)
-                setOnClickListener { openPlaceholder(PlaceholderActivity.ACTION_ADD, null) }
+                setOnClickListener { startActivity(EditorActivity.addIntent(this@MainActivity)) }
             })
         }
         column.addView(emptyState, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -201,7 +201,7 @@ class MainActivity : AppCompatActivity() {
             setText(R.string.add_web_app)
             setIconResource(android.R.drawable.ic_input_add)
             contentDescription = getString(R.string.add_web_app)
-            setOnClickListener { openPlaceholder(PlaceholderActivity.ACTION_ADD, null) }
+            setOnClickListener { startActivity(EditorActivity.addIntent(this@MainActivity)) }
         }
         addButton = add
         root.addView(add, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
@@ -314,7 +314,7 @@ class MainActivity : AppCompatActivity() {
             }
             setOnLongClickListener {
                 if (draft != null) return@setOnLongClickListener true
-                openPlaceholder(PlaceholderActivity.ACTION_EDIT, app.id)
+                startActivity(EditorActivity.editIntent(this@MainActivity, app.id))
                 true
             }
         }
@@ -401,12 +401,5 @@ class MainActivity : AppCompatActivity() {
         }
         if (clearing) ViewCompat.setStateDescription(row, getString(R.string.clearing_state))
         return row
-    }
-
-    private fun openPlaceholder(action: String, id: String?) {
-        startActivity(Intent(this, PlaceholderActivity::class.java).apply {
-            this.action = action
-            if (id != null) putExtra(PlaceholderActivity.EXTRA_APP_ID, id)
-        })
     }
 }

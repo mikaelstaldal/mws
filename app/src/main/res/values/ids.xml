@@ -19,4 +19,16 @@
     <item name="reorder_done" type="id" />
     <item name="reorder_cancel" type="id" />
     <item name="drag_handle" type="id" />
+    <item name="editor_scroll" type="id" />
+    <item name="editor_load_error" type="id" />
+    <item name="editor_clearing_notice" type="id" />
+    <item name="editor_url" type="id" />
+    <item name="editor_url_layout" type="id" />
+    <item name="editor_name" type="id" />
+    <item name="editor_name_layout" type="id" />
+    <item name="editor_mypass_status" type="id" />
+    <item name="editor_third_party_cookies" type="id" />
+    <item name="editor_third_party_cookies_note" type="id" />
+    <item name="editor_cancel" type="id" />
+    <item name="editor_save" type="id" />
 </resources>

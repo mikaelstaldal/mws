@@ -22,11 +22,39 @@ object UrlPolicy {
     private val ipv4 = Regex("[0-9]+(?:\\.[0-9]+){3}")
     private val decimalPort = Regex("[0-9]+")
 
+    /** Why typed input was rejected, for inline editor validation (R§6.1). */
+    sealed interface UserInput {
+        data class Valid(val url: HttpsUrl) : UserInput
+        data object Empty : UserInput
+        data object HttpsRequired : UserInput
+        data object TooLong : UserInput
+        data object Invalid : UserInput
+    }
+
     /** Accepts a typed URL or an unambiguous scheme-less DNS authority. */
-    fun normalizeUserInput(input: String): HttpsUrl? {
+    fun normalizeUserInput(input: String): HttpsUrl? = (validateUserInput(input) as? UserInput.Valid)?.url
+
+    /**
+     * [normalizeUserInput] with the reason for rejection. Every `http:` URL, including
+     * `localhost`, is [UserInput.HttpsRequired]; a scheme-less `http:<port>` authority is not.
+     */
+    fun validateUserInput(input: String): UserInput {
         val trimmed = input.trim { it == ' ' || it in '\t'..'\r' }
-        if (trimmed.isEmpty() || trimmed.any(::isForbiddenInputCharacter)) return null
-        if (trimmed.startsWith("https://", ignoreCase = true)) return parseHttps(trimmed)
+        if (trimmed.isEmpty()) return UserInput.Empty
+        if (trimmed.startsWith("http:", ignoreCase = true) && trimmed.getOrNull(5)?.isDigit() != true)
+            return UserInput.HttpsRequired
+        // Canonical serialization never shrinks by more than a host's length, so far longer
+        // input cannot fit; this also bounds the parser's work.
+        if (trimmed.length > 2 * MAX_URL_BYTES) return UserInput.TooLong
+        val url = normalizeTrimmed(trimmed) ?: return UserInput.Invalid
+        return if (url.serialized.toByteArray(Charsets.UTF_8).size > MAX_URL_BYTES) UserInput.TooLong
+        else UserInput.Valid(url)
+    }
+
+    private fun normalizeTrimmed(trimmed: String): HttpsUrl? {
+        if (trimmed.any(::isForbiddenInputCharacter)) return null
+        if (trimmed.startsWith("https://", ignoreCase = true)) return parseHttps(trimmed,
+            allowIpLiteral = true, maxBytes = null)
         if (trimmed.startsWith("//")) return null
         val authority = trimmed.substringBefore('/').substringBefore('?').substringBefore('#')
         if (authority.isEmpty() || authority.startsWith('[') || authority.contains('@') ||
@@ -34,7 +62,7 @@ object UrlPolicy {
         val host = authority.substringBefore(':')
         if (host.isEmpty() || authority.count { it == ':' } > 1) return null
         if (authority.contains(':') && !validPort(authority.substringAfter(':'))) return null
-        return parseHttps("https://$trimmed", allowIpLiteral = false)
+        return parseHttps("https://$trimmed", allowIpLiteral = false, maxBytes = null)
     }
 
     /** Checks and canonicalizes an absolute URL from navigation or discovery. */

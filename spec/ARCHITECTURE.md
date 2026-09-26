@@ -24,6 +24,7 @@ This document records the technical design and constraints that implement
 | Icon store (private files, backup-excluded) | PNG/WebP renditions keyed by app ID |
 | `ProfileManager` | Profile naming, generation lifecycle, `ProfileStore` calls, deferred deletion, startup maintenance |
 | `ProviderCompatibility` | Provider package/version floors, `MULTI_PROFILE` check, runtime self-test, per-feature enablement flags |
+| Editor (`EditorActivity`) | Add/edit fields and inline validation, name-source tracking, third-party-cookie acknowledgement, sensitive-URL consent and Save/Cancel |
 | Discovery engine | Discovery WebView + DOM extraction + native discovery client + manifest processor + icon pipeline |
 | Shell activity | Chromeless WebView host, navigation policy, new-window routing, errors, timers, permissions, presentation |
 | `MyPassClient` | Intent construction, availability, result validation, timeout, request identity binding |
@@ -146,6 +147,7 @@ The normative guarantee is the `ProfileStore` contract: after accepted deletion 
 
 - There are never passwords, Authorization headers, cookie contents or page HTML.
 - The main screen keeps reorder changes in an in-memory ID draft. Drag handles and accessibility actions share the same move operation; Cancel discards it. Done validates and commits the complete order through the repository transaction, then requests both widget refreshes. Failed saves retain the draft for retry or cancellation. Observed removals are removed from the draft and additions are appended; a membership race at commit rejects the stale draft. Recreation restores the unsaved draft, while leaving without Done does not persist it. Once Done begins, its transaction and widget refresh requests survive activity destruction.
+- The editor writes nothing until Save; Cancel and Back discard the draft. `UrlPolicy.validateUserInput` reports why typed input fails (empty, HTTPS required, too long after canonical serialization, invalid) and the URL field has no length filter, so an overlong paste fails validation instead of being truncated into a different URL. `EditorDraft` builds the record: a new app gets the configured URL as launch URL and its origin as scope; an unchanged URL keeps derived metadata; a same-origin change drops the final URL, manifest snapshot and colors but keeps the icon. Sensitive-URL consent is asked for each pending configured, final and launch URL in turn before the write; digests of URLs no longer stored are pruned. The editor observes the record, closing when it is removed and following `CLEARING` state. Save never changes profile lifecycle fields.
 - Ordering is a stable total order with contiguous positions. Add, remove and reorder update all affected positions in one transaction. The app ID is the deterministic tie-breaker when repairing duplicate or gapped positions.
 
 ### 6.2 Maintenance store (backup-excluded)

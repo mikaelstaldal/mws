@@ -73,7 +73,7 @@ It is not a general-purpose browser. It is a user-configured container for trust
 
 ### 6.1 Fields and actions
 
-- **Name** (required). Leading and trailing Unicode whitespace is trimmed. It must contain at least one non-whitespace character, must not contain NUL, bidi-control or non-printing control characters, and is limited to 128 code points. Discovered names are normalized the same way; an invalid result falls through to the next name source.
+- **Name** (required). Leading and trailing Unicode whitespace is trimmed. It must contain at least one non-whitespace character, must not contain NUL, bidi-control or non-printing control characters, and is limited to 128 code points. Discovered names are normalized the same way; an invalid result falls through to the next name source. While Name is empty or still holds the host it was last filled with, and the user has not edited it, it is filled synchronously from the canonical host whenever the URL validates.
 - **URL** (required, HTTPS only):
   - Leading and trailing ASCII whitespace is trimmed.
   - Scheme-less input of the form authority[path][query][fragment] with a valid DNS or IDN host and optional decimal port gets `https://` prepended (`example.com/path` → `https://example.com/path`). IDN hosts are converted to canonical ASCII.

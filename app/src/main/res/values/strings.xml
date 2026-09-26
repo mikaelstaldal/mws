@@ -28,8 +28,6 @@
     <string name="app_row_description">%1$s, %2$s. Double tap to open. Long press to edit.</string>
     <string name="app_icon_description">Icon for %1$s</string>
     <string name="provider_error_entry">WebView provider incompatible. View details and update options.</string>
-    <string name="add_unavailable">The add screen is not available yet.</string>
-    <string name="editor_unavailable">The editor is not available yet.</string>
     <string name="discovery_credentialless_warning">Authenticated site details may be unavailable during discovery.</string>
     <string name="app_unavailable">This app is no longer available.</string>
     <string name="shell_start_failed">This app could not be opened. Try again.</string>
@@ -56,7 +54,6 @@
     <string name="external_prompt_sms">Open this text message link in another app?</string>
     <string name="external_prompt_geo">Open this location in another app?</string>
     <string name="external_prompt_market">Open this app store link in another app?</string>
-    <string name="unknown_action">This action is unavailable.</string>
     <string name="mypass_available">MyPass available</string>
     <string name="mypass_unavailable">MyPass unavailable; you can still save and use this app</string>
     <string name="provider_incompatible">Web apps cannot run with the current WebView provider (%1$s, version %2$s). Update this provider in your app store or Android settings, then return here. You can still configure or remove saved apps. Launching, discovery, and clearing site data are paused until compatibility is restored.</string>
@@ -84,4 +81,29 @@
     <string name="reorder_row">%1$s. Reordering.</string>
     <string name="reorder_failed">Could not save order. The app list may have changed. Cancel and try again.</string>
     <string name="reorder_position">Position %1$d of %2$d</string>
+    <string name="editor_add_title">Add web app</string>
+    <string name="editor_edit_title">Edit web app</string>
+    <string name="editor_load_failed">Could not load saved apps. Restart the app to retry.</string>
+    <string name="editor_url">URL</string>
+    <string name="editor_url_helper">Secure (HTTPS) address, for example example.com</string>
+    <string name="editor_url_required">Enter the address of the web app.</string>
+    <string name="editor_https_required">HTTPS required. Insecure (HTTP) addresses cannot be saved.</string>
+    <string name="editor_url_too_long">This address is too long.</string>
+    <string name="editor_url_invalid">This is not a valid web address.</string>
+    <string name="editor_origin_change_unavailable">Changing an app to a different site is not supported yet. Add a new app for that site instead.</string>
+    <string name="editor_origin_change_clearing">A different site cannot be set while site data is being cleared. You can still change the path of the address.</string>
+    <string name="editor_clearing_notice">Site data is being cleared. You can change the name, the third-party cookie setting and the address within the same site. Clearing again and changing to a different site are unavailable until clearing finishes.</string>
+    <string name="editor_sensitive_declined">Not saved. The address contains parameters that may hold credentials and was not confirmed.</string>
+    <string name="editor_name">Name</string>
+    <string name="editor_name_required">Enter a name.</string>
+    <string name="editor_name_too_long">The name is too long. Maximum length: %1$d.</string>
+    <string name="editor_name_invalid">The name contains invisible or control characters.</string>
+    <string name="editor_third_party_cookies">Allow third-party cookies</string>
+    <string name="editor_third_party_cookies_note">Applies only to this app. Turning this off blocks future third-party cookie access but does not delete stored cookies; use Clear cookies and site data for that.</string>
+    <string name="third_party_cookies_title">Allow third-party cookies?</string>
+    <string name="third_party_cookies_warning">Third-party cookies let other sites embedded in this app recognize you across sites, which can be used for cross-site tracking. Enable them only if this app needs them, for example for sign-in through another site. This applies only to this app.</string>
+    <string name="third_party_cookies_enable">Allow</string>
+    <string name="editor_cancel">Cancel</string>
+    <string name="editor_save">Save</string>
+    <string name="editor_save_failed">Could not save. Try again.</string>
 </resources>

@@ -73,7 +73,7 @@ class DiscoverySessionInstrumentedTest {
                 val count = AtomicInteger()
                 val result = AtomicReference<DiscoveryDocumentResult>()
                 lateinit var session: DiscoverySession
-                ActivityScenario.launch(PlaceholderActivity::class.java).use { scenario ->
+                ActivityScenario.launch(EditorActivity::class.java).use { scenario ->
                     scenario.onActivity { activity ->
                         val host = FrameLayout(activity)
                         activity.addContentView(host, FrameLayout.LayoutParams(
@@ -115,7 +115,7 @@ class DiscoverySessionInstrumentedTest {
                 val committed = CountDownLatch(1)
                 val result = AtomicReference<DiscoveryDocumentResult>()
                 lateinit var session: DiscoverySession
-                ActivityScenario.launch(PlaceholderActivity::class.java).use { scenario ->
+                ActivityScenario.launch(EditorActivity::class.java).use { scenario ->
                     scenario.onActivity { activity ->
                         val host = FrameLayout(activity)
                         activity.addContentView(host, FrameLayout.LayoutParams(
@@ -148,7 +148,7 @@ class DiscoverySessionInstrumentedTest {
             val result = AtomicReference<DiscoveryDocumentResult>()
             lateinit var session: DiscoverySession
             lateinit var host: FrameLayout
-            ActivityScenario.launch(PlaceholderActivity::class.java).use { scenario ->
+            ActivityScenario.launch(EditorActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
                     host = FrameLayout(activity)
                     activity.addContentView(host, FrameLayout.LayoutParams(

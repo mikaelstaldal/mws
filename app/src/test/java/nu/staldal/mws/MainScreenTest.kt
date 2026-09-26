@@ -41,10 +41,11 @@ class MainScreenTest {
         assertEquals("Add web app", activity.findViewById<TextView>(R.id.empty_add).text.toString())
         activity.findViewById<View>(R.id.empty_add).performClick()
         val next = Shadows.shadowOf(activity).nextStartedActivity
-        assertEquals(PlaceholderActivity.ACTION_ADD, next.action)
+        assertEquals(EditorActivity::class.java.name, next.component?.className)
         activity.findViewById<View>(R.id.add_web_app).performClick()
-        assertEquals(PlaceholderActivity.ACTION_ADD,
-            Shadows.shadowOf(activity).nextStartedActivity.action)
+        val fab = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(EditorActivity::class.java.name, fab.component?.className)
+        assertNull(fab.getStringExtra(EditorActivity.EXTRA_APP_ID))
         controller.pause().stop().destroy()
     }
 
@@ -70,8 +71,8 @@ class MainScreenTest {
         assertNotNull((first.findViewById<View>(R.id.app_icon) as android.widget.ImageView).drawable)
         first.performLongClick()
         val edit = Shadows.shadowOf(activity).nextStartedActivity
-        assertEquals(PlaceholderActivity.ACTION_EDIT, edit.action)
-        assertEquals("first", edit.getStringExtra(PlaceholderActivity.EXTRA_APP_ID))
+        assertEquals(EditorActivity::class.java.name, edit.component?.className)
+        assertEquals("first", edit.getStringExtra(EditorActivity.EXTRA_APP_ID))
         controller.pause().stop().destroy()
     }
 
