@@ -404,7 +404,7 @@ The instrumented test fixture uses a loopback MockWebServer with a checked-in te
 - **Sensitive URLs**: key-only redaction, exact-URL consent, backup disclosure, delegation, and decline behavior.
 - **Restore**: sentinel detection, interrupted normalization, `ACTIVE` state, new generations, cleared icons, order repair.
 - **Ordering**: drag-and-drop, accessible move actions, cancel/save, restart, append, stable on edit, gap removal, transactional rollback, repair of duplicate or gapped positions.
-- **Widgets**: multiple instances, resize, canonical order with different subsets, updates and removal, reboot, forged or stale IDs, per-instance records, `ALL_APPS` versus subset, pruning, deletion on `onDeleted`.
+- **Widgets**: multiple instances, resize, canonical order with different subsets, updates and removal, reboot, forged or stale IDs, per-instance records, `ALL_APPS` versus subset, pruning, deletion on `onDeleted`. `WidgetAcceptanceInstrumentedTest` supplies controlled device coverage for missing-record fallback, CLEARING rows/configuration/launch exclusion, and record cleanup; its optional hold allows inspection in the real launcher. See [controlled widget acceptance](WIDGET_ACCEPTANCE.md).
 - **Accessibility**: main screen, editor, dialogs, errors, widget configuration.
 
 ## 15. Provider compatibility matrix

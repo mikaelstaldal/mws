@@ -143,7 +143,7 @@ class MultiWidgetService : RemoteViewsService() {
         applicationContext, intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,
             AppWidgetManager.INVALID_APPWIDGET_ID))
 
-    private class Factory(private val context: Context, private val widgetId: Int) : RemoteViewsFactory {
+    internal class Factory(private val context: Context, private val widgetId: Int) : RemoteViewsFactory {
         private var apps: List<ConfiguredApp> = emptyList()
 
         override fun onCreate() = onDataSetChanged()
