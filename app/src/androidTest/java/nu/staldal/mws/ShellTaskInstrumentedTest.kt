@@ -13,6 +13,7 @@ import androidx.test.runner.lifecycle.Stage
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotSame
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
@@ -95,7 +96,19 @@ class ShellTaskInstrumentedTest {
         launch(second)
         awaitShell(second)
 
-        assertEquals(ClearResult.Cleared, runBlocking { services.profiles.clear(first) })
+        val original = runBlocking { services.repository.get(first) }!!
+        val result = runBlocking { services.profiles.clear(first) }
+        assertTrue("Unexpected clear result: $result",
+            result == ClearResult.Cleared || result == ClearResult.PendingRestart)
+        val cleared = runBlocking { services.repository.get(first) }!!
+        assertEquals(ProfileState.ACTIVE, cleared.profileState)
+        assertEquals(original.profileGeneration + 1, cleared.profileGeneration)
+        assertEquals(null, cleared.retiringProfileGeneration)
+        if (result == ClearResult.PendingRestart) {
+            assertTrue(store.hasTombstone(ProfileNames.app(first, original.profileGeneration)))
+        } else {
+            assertFalse(store.hasTombstone(ProfileNames.app(first, original.profileGeneration)))
+        }
         await { stage(a) == Stage.DESTROYED && tasksFor(first).isEmpty() }
         assertEquals(1, tasksFor(second).size)
     }

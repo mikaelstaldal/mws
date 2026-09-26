@@ -47,6 +47,10 @@ class ScaffoldInstrumentedTest {
             lateinit var webView: WebView
             instrumentation.runOnMainSync {
                 webView = WebView(instrumentation.targetContext)
+                // The assertion reads the document through evaluateJavascript; WebView defaults
+                // to JavaScript disabled and can return null even after a successful HTTPS load.
+                @Suppress("SetJavaScriptEnabled")
+                webView.settings.javaScriptEnabled = true
                 webView.webViewClient = object : WebViewClient() {
                     override fun onPageFinished(view: WebView, url: String) {
                         view.evaluateJavascript("document.body.textContent") {

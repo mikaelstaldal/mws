@@ -33,7 +33,9 @@ class LocalHttpsServer : Closeable {
         start()
     }
 
-    val url get() = server.url("/")
+    // MockWebServer may resolve a canonical hostname here. Do it once on the test thread,
+    // before a WebView callback reads the URL on Android's main thread.
+    val url = server.url("/")
     val client: OkHttpClient = OkHttpClient.Builder()
         .sslSocketFactory(clientCertificates.sslSocketFactory(), clientCertificates.trustManager)
         .build()

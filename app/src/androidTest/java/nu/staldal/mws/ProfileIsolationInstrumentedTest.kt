@@ -14,7 +14,6 @@ import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
-import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assume.assumeTrue
 import org.junit.Before
@@ -104,11 +103,14 @@ class ProfileIsolationInstrumentedTest {
         writeEverything(victim, "gone")
         close(victim)
 
-        // A compatible provider must accept deletion once no WebView uses the profile.
+        // A§5.2 permits a loaded profile to remain until process restart even after destroy().
+        // RuntimeSelfTestInstrumentedTest checks actual deletion in a fresh process.
         val result = deleteEventually(deleted)
-        assertNotNull("Provider kept the profile loaded after its WebViews closed", result)
-        assertTrue(result!!)
-        assertFalse(onMain { ProfileStore.getInstance().allProfileNames.contains(deleted) })
+        if (result != null) {
+            // Both true (deleted) and false (already absent) are successful cleanup outcomes.
+            assertFalse(onMain { ProfileStore.getInstance().allProfileNames.contains(deleted) })
+            assertNothingVisible(open(deleted))
+        }
         assertTrue(onMain { ProfileStore.getInstance().allProfileNames.contains(kept) })
         val survivor = open(kept)
         assertEquals("\"kept\"", eval(survivor, "localStorage.getItem('k')"))
