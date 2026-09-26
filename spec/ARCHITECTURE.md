@@ -284,7 +284,12 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 
 ### 9.4 Navigation policy implementation
 
-- `shouldOverrideUrlLoading` enforces scheme and transport policy: HTTPS stays, cleartext is rejected, dangerous schemes are blocked, and allowlisted external schemes are confirmed only when main-frame, `!isRedirect` and `hasGesture()`.
+- `shouldOverrideUrlLoading` enforces scheme and transport policy through the pure `NavigationPolicy`: HTTPS stays, cleartext is rejected, dangerous schemes are blocked, and allowlisted external schemes are confirmed only when main-frame, `!isRedirect` and `hasGesture()`.
+  - HTTPS must pass `UrlPolicy.parseNavigation`: the host and userinfo rules of an allowed HTTPS URL (R§10, so hosts failing UTS #46 STD3, such as labels with `_`, are refused even though Chromium accepts them), without the 8 KiB persisted-URL limit (long sign-in redirects must work).
+  - Subframes: HTTPS, `about:`, `data:` and `blob:` load as web content; everything else is cancelled silently, and nothing from a subframe is ever delegated.
+  - A cancelled navigation or refused download keeps the current page and shows a non-fatal toast. When it replaces the initial load itself (a redirect or download before the initial document's `onPageStarted`) there is no page to keep, so the error screen is shown instead.
+  - POST navigations bypass `shouldOverrideUrlLoading`. A cleartext POST is refused by the network security config before any byte is sent, and its main-frame `onReceivedError` shows "HTTPS required"; Retry never replays it.
+- `ShellHandoff` (owned by the activity, dismissed on destroy) performs every delegation. A confirmation dialog names only the destination type; one is pending at a time and it grants nothing beyond that navigation. After confirmation, `CredentialParameters` scans the URL and a sensitive one needs a fresh `SensitiveUrlWarning` consent. External intents are `ACTION_VIEW` + `CATEGORY_BROWSABLE` + `FLAG_ACTIVITY_NEW_TASK` with only the data URI; `ActivityNotFoundException` or `SecurityException` gives a non-fatal "no app" message.
 - Multiple windows: `setSupportMultipleWindows(true)` is used solely to observe new-window requests. `javaScriptCanOpenWindowsAutomatically = false`, so an ungestured `window.open()` fails.
 - **New-window probe**: in `onCreateWindow`, create a temporary probe WebView bound to the **same app's active profile** (never the default, another app's, or a discovery profile). Learn the destination in a synchronous pre-load callback and cancel there, before any request is dispatched. Reject when:
   - the first observable callback comes after dispatch;
@@ -292,10 +297,10 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
   - `WebResourceRequest.method` is not GET;
   - the destination is `about:blank` or undeterminable.
   Destroy the probe immediately. Route in-scope HTTPS to the existing WebView and out-of-scope HTTPS to an `ACTION_VIEW` browser intent. The compatibility suite verifies zero request bytes and no profile mutation per floor version.
-- Browser handoff intents carry no headers, referrer extras or profile state.
-- Long-press **Open in browser** uses `WebView.getHitTestResult` / a context menu, for allowed HTTPS URLs only.
+- Browser handoff intents carry no headers, referrer extras or profile state. They target the package of the default handler for a bare `https://` browsable intent (declared in `<queries>`), so an app claiming the link cannot receive it; when the default is not among the matching handlers (the system resolver, whatever its package) the user chooses, and when no handler matches a non-fatal "no browser" message is shown. The canonical serialization is handed off.
+- Long-press **Open in browser** uses `WebView.getHitTestResult` / a context menu, for allowed HTTPS URLs only. Only `SRC_ANCHOR_TYPE` is offered: for an image link the hit test exposes the image URL rather than the link, so none is offered.
 - Pull-to-refresh uses a `SwipeRefreshLayout` (or equivalent) that is enabled only when the WebView is at scroll top.
-- Downloads: the `DownloadListener` shows the unsupported message.
+- Downloads: the `DownloadListener` shows the unsupported message and never starts an intent. `ShellWebSettings` installs a silent listener before any load so no provider default can delegate.
 
 ### 9.5 Initial-load timer
 

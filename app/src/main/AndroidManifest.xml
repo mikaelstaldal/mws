@@ -13,6 +13,12 @@
 
     <queries>
         <package android:name="nu.staldal.mypass" />
+        <!-- Finds the default browser for Open in browser handoff (A§9.4). -->
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <category android:name="android.intent.category.BROWSABLE" />
+            <data android:scheme="https" />
+        </intent>
     </queries>
 
     <application

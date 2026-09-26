@@ -11,6 +11,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.ContextMenu
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
@@ -57,6 +58,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     private var holder: ShellHolder? = null
     internal lateinit var webPermissions: WebPermissions
     internal lateinit var myPass: MyPassClient
+    internal lateinit var handoff: ShellHandoff
     private lateinit var container: FrameLayout
     private var taskDescriptionJob: Job? = null
     private lateinit var presentation: ShellPresentation
@@ -68,6 +70,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         webPermissions = WebPermissions(this, savedInstanceState) { holder?.record }
         myPass = MyPassClient(this)
         myPass.restoreIdentity(savedInstanceState)
+        handoff = ShellHandoff(this)
         val appId = appIdOf(intent)
         if (appId == null) {
             finishAndRemoveTask()
@@ -100,6 +103,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     override fun onDestroy() {
         taskDescriptionJob?.cancel()
         webPermissions.dispose()
+        handoff.close()
         myPass.close()
         holder?.detach(this)
         super.onDestroy()
@@ -118,11 +122,21 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         holder?.record?.let(presentation::apply)
         if (holder?.hasVisiblePaint != true) webView.setBackgroundColor(presentation.backgroundColor)
         webView.webChromeClient = webPermissions
+        registerForContextMenu(webView)
         container.addView(webView, FrameLayout.LayoutParams(-1, -1))
         renderOverlay()
     }
 
     override fun onPresentationChanged() = renderOverlay()
+
+    override fun onNotice(message: Int) = handoff.notice(message)
+
+    override fun onExternal(decision: NavigationDecision.Confirm) = handoff.confirmExternal(decision)
+
+    override fun onCreateContextMenu(menu: ContextMenu, view: View, menuInfo: ContextMenu.ContextMenuInfo?) {
+        super.onCreateContextMenu(menu, view, menuInfo)
+        if (view is WebView && view === holder?.bound?.webView) handoff.populateContextMenu(menu, view)
+    }
 
     private fun renderOverlay() {
         overlay?.let(container::removeView)
@@ -240,6 +254,10 @@ class ShellHolder(
         fun onReady(webView: WebView)
         fun onRecord(app: ConfiguredApp)
         fun onPresentationChanged()
+        /** Shows a non-fatal message over the page. */
+        fun onNotice(message: Int)
+        /** Asks before delegating an allowlisted external scheme. */
+        fun onExternal(decision: NavigationDecision.Confirm)
         /** Finish the activity and its task. */
         fun onClosed(reason: CloseReason)
     }
@@ -266,6 +284,8 @@ class ShellHolder(
     private var currentUrl: String? = null
     private var currentGet = false
     private var requestObserved = false
+    /** Whether the current initial load's document has started; before that nothing can be kept. */
+    private var initialDocumentStarted = false
     private var lastSafeGet: String? = null
     private var lastCommittedUrl: String? = null
     private val knownSafeGets = mutableSetOf<String>()
@@ -308,6 +328,7 @@ class ShellHolder(
         if (this.host !== host) return
         (host as? ShellActivity)?.webPermissions?.close()
         bound?.webView?.webChromeClient = ShellChromeClient()
+        bound?.webView?.setOnCreateContextMenuListener(null)
         formFill?.rejectDocument()
         this.host = null
         bound?.webView?.let { (it.parent as? ViewGroup)?.removeView(it) }
@@ -488,6 +509,7 @@ class ShellHolder(
         error = null
         rendererGone = false
         initialNavigation = initial
+        initialDocumentStarted = false
         loading = initial
         stopTimer()
         timerRemaining = 30_000L
@@ -499,7 +521,17 @@ class ShellHolder(
     }
 
     private fun installClient(webView: WebView) {
+        webView.setDownloadListener { _, _, _, _, _ ->
+            if (bound?.webView === webView && closed == null) notice(R.string.shell_download_unsupported)
+        }
         webView.webViewClient = ShellWebViewClient(
+            onIntercepted = { decision ->
+                if (bound?.webView === webView && closed == null) when (decision) {
+                    is NavigationDecision.Confirm -> host?.onExternal(decision)
+                    is NavigationDecision.Block -> decision.message?.let(::notice)
+                    NavigationDecision.Stay -> {}
+                }
+            },
             onRequest = { url, get ->
                 if (bound?.webView === webView) {
                     (host as? ShellActivity)?.webPermissions?.close()
@@ -513,6 +545,7 @@ class ShellHolder(
                 if (bound?.webView === webView && error == null) {
                     (host as? ShellActivity)?.webPermissions?.close()
                     formFill?.started(url)
+                    initialDocumentStarted = true
                     if (!requestObserved && !initialNavigation) currentGet = false
                     currentUrl = url
                     requestObserved = false
@@ -544,6 +577,18 @@ class ShellHolder(
             },
             onRendererGone = { rendererFailed(webView) },
         )
+    }
+
+    /**
+     * A cancelled navigation or refused download keeps the current page. When it replaces the
+     * initial load itself (a redirect or download before its document started) there is no page
+     * to keep, so the error screen is shown instead.
+     */
+    private fun notice(message: Int) {
+        if (initialNavigation && !initialDocumentStarted && error == null) {
+            bound?.webView?.stopLoading()
+            fail(message)
+        } else host?.onNotice(message)
     }
 
     private fun fail(message: Int) {
@@ -682,14 +727,19 @@ object ShellWebSettings {
         }
         webView.webViewClient = ShellWebViewClient()
         webView.webChromeClient = ShellChromeClient()
+        // Downloads are unsupported (R§9.5); nothing is ever handed to another app.
+        webView.setDownloadListener { _, _, _, _, _ -> }
     }
 }
 
 /**
- * Fail-closed baseline until the full navigation policy (A§9.4) lands: HTTPS stays in the shell
- * and nothing else is loaded or handed to another app.
+ * Applies [NavigationPolicy] (A§9.4): allowed HTTPS stays in the shell, and every other
+ * destination is cancelled before any request is sent and reported through [onIntercepted].
+ * POST navigations bypass `shouldOverrideUrlLoading`; a cleartext one is refused by the network
+ * security config and reported as "HTTPS required" from [onReceivedError].
  */
 private class ShellWebViewClient(
+    private val onIntercepted: (NavigationDecision) -> Unit = {},
     private val onRequest: (String, Boolean) -> Unit = { _, _ -> },
     private val onStarted: (String) -> Unit = {},
     private val onCommit: (String) -> Unit = {},
@@ -697,11 +747,16 @@ private class ShellWebViewClient(
     private val onTlsFailure: (String?) -> Unit = {},
     private val onRendererGone: (WebView) -> Boolean = { true },
 ) : WebViewClient() {
-    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean =
-        if (!request.url.toString().startsWith("https://", ignoreCase = true)) true
-        else false.also {
-            if (request.isForMainFrame) onRequest(request.url.toString(), request.method == "GET")
+    override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
+        val url = request.url.toString()
+        val decision = NavigationPolicy.decide(url, request.isForMainFrame, request.isRedirect, request.hasGesture())
+        if (decision != NavigationDecision.Stay) {
+            onIntercepted(decision)
+            return true
         }
+        if (request.isForMainFrame) onRequest(url, request.method == "GET")
+        return false
+    }
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         onStarted(url)
@@ -714,7 +769,8 @@ private class ShellWebViewClient(
     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError?) {
         if (request.isForMainFrame) {
             onRequest(request.url.toString(), request.method == "GET")
-            onFailure(R.string.shell_load_error)
+            onFailure(if (request.url.scheme.equals("http", ignoreCase = true)) R.string.shell_https_required
+                else R.string.shell_load_error)
         }
     }
 

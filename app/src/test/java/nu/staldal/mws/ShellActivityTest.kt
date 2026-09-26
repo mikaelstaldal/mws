@@ -789,6 +789,309 @@ class ShellActivityTest {
         assertEquals(false, allowed)
     }
 
+    @Test fun outOfScopeHttpsLinkStaysInTheShell() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        assertFalse(client.shouldOverrideUrlLoading(view, request("https://other.example/page", "GET")))
+        assertFalse(client.shouldOverrideUrlLoading(view,
+            request("https://login.other.example/cb", "GET", redirect = true, gesture = false)))
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        assertNull(ShadowToast.getLatestToast())
+    }
+
+    @Test fun cleartextLinksRedirectsAndPopupsAreRejectedKeepingThePage() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        for (request in listOf(request("http://example.com/", "GET"),
+            request("http://example.com/", "GET", redirect = true, gesture = false))) {
+            ShadowToast.reset()
+            assertTrue(client.shouldOverrideUrlLoading(view, request))
+            assertEquals(context.getString(R.string.shell_https_required), ShadowToast.getTextOfLatestToast())
+        }
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        assertEquals(1, view.loads)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun cleartextRedirectOfTheInitialLoadShowsHttpsRequiredError() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        assertTrue(Shadows.shadowOf(view).webViewClient.shouldOverrideUrlLoading(view,
+            request("http://example.com/start", "GET", redirect = true, gesture = false)))
+        assertEquals(context.getString(R.string.shell_https_required),
+            container(activity).getChildAt(container(activity).childCount - 1).contentDescription)
+    }
+
+    @Test fun cleartextPostFailureShowsHttpsRequiredAndRetryNeverReplaysIt() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        client.onReceivedError(view, request("http://example.com/submit", "POST"), null)
+        assertEquals(context.getString(R.string.shell_https_required),
+            container(activity).getChildAt(container(activity).childCount - 1).contentDescription)
+        activity.findViewById<Button>(R.id.shell_retry_button).performClick()
+        assertEquals(app.launchUrl, Shadows.shadowOf(view).lastLoadedUrl)
+    }
+
+    @Test fun dangerousAndUnknownSchemesAreBlockedAndNeverPassedToAndroid() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        for (url in listOf("javascript:alert(1)", "data:text/html,x", "file:///sdcard/a", "content://x/y",
+            "intent://scan/#Intent;scheme=zxing;end", "custom-app:open")) {
+            ShadowToast.reset()
+            assertTrue(url, client.shouldOverrideUrlLoading(view, request(url, "GET")))
+            assertEquals(context.getString(R.string.shell_scheme_blocked), ShadowToast.getTextOfLatestToast())
+        }
+        assertNull(org.robolectric.shadows.ShadowDialog.getLatestDialog())
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        assertEquals(1, view.loads)
+    }
+
+    @Test fun allowlistedSchemeIsDelegatedOnlyAfterConfirmationEveryTime() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        val url = "tel:+46701234567"
+        assertTrue(client.shouldOverrideUrlLoading(view, request(url, "GET")))
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        var dialog = permissionDialog()
+        assertTrue(dialog.isShowing)
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        settle()
+        val started = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(Intent.ACTION_VIEW, started.action)
+        assertEquals(url, started.dataString)
+        assertEquals(setOf(Intent.CATEGORY_BROWSABLE), started.categories)
+        assertNull(started.extras)
+        assertNull(started.component)
+
+        // No permanent grant: the next tap asks again, and Cancel delegates nothing.
+        assertTrue(client.shouldOverrideUrlLoading(view, request(url, "GET")))
+        dialog = permissionDialog()
+        assertTrue(dialog.isShowing)
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick()
+        settle()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun redirectedUngesturedOrSubframeExternalSchemesAreBlockedWithoutPrompt() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        for (request in listOf(request("mailto:a@example.com", "GET", redirect = true),
+            request("sms:+4612345", "GET", gesture = false))) {
+            ShadowToast.reset()
+            assertTrue(client.shouldOverrideUrlLoading(view, request))
+            assertEquals(context.getString(R.string.shell_external_blocked), ShadowToast.getTextOfLatestToast())
+        }
+        ShadowToast.reset()
+        assertTrue(client.shouldOverrideUrlLoading(view, request("geo:1,2", "GET", mainFrame = false)))
+        assertNull(ShadowToast.getLatestToast())
+        assertNull(org.robolectric.shadows.ShadowDialog.getLatestDialog())
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun credentialLikeExternalParametersNeedFreshRedactedConsent() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        val url = "mailto:a@example.com?subject=hi&token=s3cr3t"
+        client.shouldOverrideUrlLoading(view, request(url, "GET"))
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        settle()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        val warning = permissionDialog()
+        val message = warning.findViewById<android.widget.TextView>(android.R.id.message)!!.text.toString()
+        assertTrue(message.contains("“token”"))
+        assertFalse(message.contains("s3cr3t"))
+        warning.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        settle()
+        assertEquals(url, Shadows.shadowOf(activity).nextStartedActivity.dataString)
+    }
+
+    @Test fun missingExternalHandlerShowsNonFatalError() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        Shadows.shadowOf(context as android.app.Application).checkActivities(true)
+        client.shouldOverrideUrlLoading(view, request("market://details?id=x", "GET"))
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        settle()
+        assertEquals(context.getString(R.string.shell_no_handler), ShadowToast.getTextOfLatestToast())
+        assertFalse(activity.isFinishing)
+    }
+
+    @Test fun openInBrowserIsOfferedOnlyForAllowedHttpsLinksAndTransfersNothingElse() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        installBrowser("org.example.browser")
+        for ((type, url) in listOf(android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE to "http://example.com/",
+            android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE to "https://user@example.com/",
+            android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE to "mailto:a@example.com",
+            android.webkit.WebView.HitTestResult.IMAGE_TYPE to "https://example.com/a.png",
+            android.webkit.WebView.HitTestResult.EDIT_TEXT_TYPE to null)) {
+            assertTrue(url, contextMenu(activity, view, type, url).isEmpty())
+        }
+        val items = contextMenu(activity, view, android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE,
+            "https://Other.Example/path")
+        assertEquals(context.getString(R.string.open_in_browser), items.single().title.toString())
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        items.single().click()
+        val started = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(Intent.ACTION_VIEW, started.action)
+        assertEquals("https://other.example/path", started.dataString)
+        assertEquals("org.example.browser", started.`package`)
+        assertNull(started.extras)
+        assertTrue(started.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+    }
+
+    @Test fun openInBrowserAsksConsentForCredentialLikeParameters() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        installBrowser("org.example.browser")
+        contextMenu(activity, view, android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE,
+            "https://other.example/#/cb?access_token=abc").single().click()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick()
+        settle()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun blockedNavigationFromTheLoadingInitialDocumentKeepsItLoading() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageStarted(view, app.launchUrl, null)
+        for (url in listOf("market://details?id=x", "intent://x#Intent;end", "http://example.com/")) {
+            ShadowToast.reset()
+            assertTrue(client.shouldOverrideUrlLoading(view, request(url, "GET", gesture = false)))
+            assertNotNull(ShadowToast.getLatestToast())
+        }
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        client.onPageCommitVisible(view, app.launchUrl)
+        assertEquals(context.getString(R.string.shell_https_required), ShadowToast.getTextOfLatestToast())
+    }
+
+    @Test fun downloadInPlaceOfTheInitialLoadShowsTheUnsupportedError() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).downloadListener.onDownloadStart(app.launchUrl, "ua", "attachment",
+            "application/octet-stream", 1)
+        assertEquals(context.getString(R.string.shell_download_unsupported),
+            container(activity).getChildAt(container(activity).childCount - 1).contentDescription)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun doubleTapOnOpenDelegatesOnce() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        client.shouldOverrideUrlLoading(view, request("tel:123", "GET"))
+        val open = permissionDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE)
+        open.performClick()
+        open.performClick()
+        settle()
+        assertNotNull(Shadows.shadowOf(activity).nextStartedActivity)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun destroyingTheShellDismissesPendingDelegationWithoutStarting() {
+        val app = addApp()
+        val controller = controller(ShellActivity.intent(context, app.id))
+        val activity = controller.get()
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        client.shouldOverrideUrlLoading(view, request("mailto:a@example.com?token=x", "GET"))
+        val confirmation = permissionDialog()
+        confirmation.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        settle()
+        val consent = permissionDialog()
+        assertTrue(consent.isShowing)
+        controller.recreate()
+        settle()
+        assertFalse(consent.isShowing)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        assertNull(Shadows.shadowOf(controller.get()).nextStartedActivity)
+    }
+
+    @Test fun openInBrowserWithoutBrowserShowsNonFatalError() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        contextMenu(activity, view, android.webkit.WebView.HitTestResult.SRC_ANCHOR_TYPE,
+            "https://other.example/").single().click()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        assertEquals(context.getString(R.string.shell_no_browser), ShadowToast.getTextOfLatestToast())
+        assertFalse(activity.isFinishing)
+    }
+
+    @Test fun downloadsIncludingBlobAndDataAreUnsupportedAndNeverDelegated() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        val listener = Shadows.shadowOf(view).downloadListener
+        for (url in listOf("https://example.com/file.zip", "blob:https://example.com/id", "data:text/plain,x")) {
+            ShadowToast.reset()
+            listener.onDownloadStart(url, "ua", "attachment", "application/octet-stream", 1)
+            assertEquals(context.getString(R.string.shell_download_unsupported), ShadowToast.getTextOfLatestToast())
+        }
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        assertFalse(activity.isFinishing)
+    }
+
+    private fun installBrowser(packageName: String) {
+        val info = android.content.pm.ResolveInfo().apply {
+            activityInfo = android.content.pm.ActivityInfo().apply {
+                this.packageName = packageName
+                name = "$packageName.Browser"
+            }
+        }
+        Shadows.shadowOf(context.packageManager).addResolveInfoForIntent(
+            Intent(Intent.ACTION_VIEW, Uri.parse("https://")).addCategory(Intent.CATEGORY_BROWSABLE), info)
+    }
+
+    private fun contextMenu(activity: ShellActivity, view: WebView, type: Int, url: String?):
+        List<org.robolectric.fakes.RoboMenuItem> {
+        Shadows.shadowOf(view).setHitTestResult(org.robolectric.shadows.ShadowWebView.createHitTestResult(type, url))
+        val menu = org.robolectric.fakes.RoboMenu(activity)
+        val contextMenu = java.lang.reflect.Proxy.newProxyInstance(javaClass.classLoader,
+            arrayOf(android.view.ContextMenu::class.java)) { _, method, args ->
+            if (method.declaringClass == android.view.ContextMenu::class.java) null
+            else method.invoke(menu, *(args ?: emptyArray()))
+        } as android.view.ContextMenu
+        activity.onCreateContextMenu(contextMenu, view, null)
+        return (0 until menu.size()).map { menu.getItem(it) as org.robolectric.fakes.RoboMenuItem }
+    }
+
     private fun addApp(generation: Long = 0, themeColor: Int? = null, backgroundColor: Int? = null): ConfiguredApp {
         val app = ConfiguredApp(java.util.UUID.randomUUID().toString(), "App", NameSource.DISCOVERED,
             "https://example.com/", null, "https://example.com/start", "https://example.com/",
@@ -809,11 +1112,12 @@ class ShellActivityTest {
         return container(activity).getChildAt(0) as CountingWebView
     }
 
-    private fun request(url: String, method: String) = object : WebResourceRequest {
+    private fun request(url: String, method: String, mainFrame: Boolean = true, redirect: Boolean = false,
+                        gesture: Boolean = true) = object : WebResourceRequest {
         override fun getUrl(): Uri = Uri.parse(url)
-        override fun isForMainFrame() = true
-        override fun isRedirect() = false
-        override fun hasGesture() = true
+        override fun isForMainFrame() = mainFrame
+        override fun isRedirect() = redirect
+        override fun hasGesture() = gesture
         override fun getMethod() = method
         override fun getRequestHeaders(): MutableMap<String, String> = mutableMapOf()
     }

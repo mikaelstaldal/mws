@@ -7,6 +7,8 @@ import io.github.stephanebastian.whatwg.url.ValidationException
 /** The only authority for URL decisions. Callers use the canonical serialization it returns. */
 object UrlPolicy {
     const val MAX_URL_BYTES = 8 * 1024
+    /** Chromium's own URL length limit. */
+    private const val MAX_NAVIGATION_CHARS = 2 * 1024 * 1024
 
     class HttpsUrl internal constructor(
         val serialized: String,
@@ -38,6 +40,13 @@ object UrlPolicy {
     /** Checks and canonicalizes an absolute URL from navigation or discovery. */
     fun parseHttps(input: String): HttpsUrl? = parseHttps(input, allowIpLiteral = true)
 
+    /**
+     * Checks a shell navigation destination. The host and userinfo rules are those of
+     * [parseHttps], but the persisted-URL size limit does not apply, so long sign-in redirects work.
+     */
+    fun parseNavigation(input: String): HttpsUrl? =
+        parseHttps(input, allowIpLiteral = true, maxChars = MAX_NAVIGATION_CHARS, maxBytes = null)
+
     fun isAllowedHttpsUrl(input: String): Boolean = parseHttps(input) != null
 
     fun sameOrigin(first: HttpsUrl, second: HttpsUrl): Boolean = first.origin == second.origin
@@ -46,8 +55,9 @@ object UrlPolicy {
     fun isWithinScope(candidate: HttpsUrl, scope: HttpsUrl): Boolean =
         sameOrigin(candidate, scope) && candidate.path.startsWith(scope.path)
 
-    private fun parseHttps(input: String, allowIpLiteral: Boolean): HttpsUrl? {
-        if (input.length > 65536 || !input.startsWith("https://", ignoreCase = true) ||
+    private fun parseHttps(input: String, allowIpLiteral: Boolean, maxChars: Int = 65536,
+                           maxBytes: Int? = MAX_URL_BYTES): HttpsUrl? {
+        if (input.length > maxChars || !input.startsWith("https://", ignoreCase = true) ||
             input.any(::isForbiddenInputCharacter)) return null
         val authority = input.substring(8).substringBefore('/').substringBefore('?').substringBefore('#')
         if (authority.isEmpty() || authority.contains('@') || authority.contains('\\')) return null
@@ -102,7 +112,7 @@ object UrlPolicy {
             }
         }
         val serialized = parsed.href()
-        if (serialized.toByteArray(Charsets.UTF_8).size > MAX_URL_BYTES) return null
+        if (maxBytes != null && serialized.toByteArray(Charsets.UTF_8).size > maxBytes) return null
         return HttpsUrl(serialized, parsed.origin(), parsed.hostname(), parsed.pathname())
     }
 
