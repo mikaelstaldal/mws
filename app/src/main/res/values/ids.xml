@@ -15,4 +15,8 @@
     <item name="clearing_label" type="id" />
     <item name="provider_error_message" type="id" />
     <item name="shell_container" type="id" />
+    <item name="reorder_apps" type="id" />
+    <item name="reorder_done" type="id" />
+    <item name="reorder_cancel" type="id" />
+    <item name="drag_handle" type="id" />
 </resources>

@@ -142,6 +142,7 @@ The normative guarantee is the `ProfileStore` contract: after accepted deletion 
 | `createdAt`, `updatedAt` | Timestamps |
 
 - There are never passwords, Authorization headers, cookie contents or page HTML.
+- The main screen keeps reorder changes in an in-memory ID draft. Drag handles and accessibility actions share the same move operation; Cancel discards it. Done validates and commits the complete order through the repository transaction, then requests both widget refreshes. Failed saves retain the draft for retry or cancellation. Observed removals are removed from the draft and additions are appended; a membership race at commit rejects the stale draft. Recreation restores the unsaved draft, while leaving without Done does not persist it. Once Done begins, its transaction and widget refresh requests survive activity destruction.
 - Ordering is a stable total order with contiguous positions. Add, remove and reorder update all affected positions in one transaction. The app ID is the deterministic tie-breaker when repairing duplicate or gapped positions.
 
 ### 6.2 Maintenance store (backup-excluded)

@@ -1,5 +1,8 @@
 package nu.staldal.mws
 
+import android.content.ClipData
+import android.view.DragEvent
+import android.view.MotionEvent
 import android.content.Intent
 import android.os.Bundle
 import android.text.TextUtils
@@ -15,6 +18,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +38,17 @@ class MainActivity : AppCompatActivity() {
     private lateinit var progress: TextView
     private lateinit var iconStore: IconStore
     private var observation: Job? = null
+    private var currentApps: List<ConfiguredApp> = emptyList()
+    private var draft: MutableList<String>? = null
+    private var saving = false
+    private val reorderBack = object : androidx.activity.OnBackPressedCallback(false) {
+        override fun handleOnBackPressed() { cancelOrder() }
+    }
+    private lateinit var reorder: View
+    private lateinit var done: View
+    private lateinit var cancel: View
+    private lateinit var addButton: View
+
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -43,6 +58,8 @@ class MainActivity : AppCompatActivity() {
         repository = services.repository
         iconStore = services.icons
         compatibility = services.compatibility
+        onBackPressedDispatcher.addCallback(this, reorderBack)
+        draft = savedInstanceState?.getStringArrayList("reorderDraft")?.toMutableList()
         buildScreen()
     }
 
@@ -64,7 +81,15 @@ class MainActivity : AppCompatActivity() {
             repository.apps.catch { listError.visibility = View.VISIBLE }
                 .collect { apps ->
                     listError.visibility = View.GONE
-                    render(apps)
+                    draft?.let { order ->
+                        val ids = apps.map { it.id }
+                        order.retainAll(ids.toSet())
+                        order.addAll(ids.filter { it !in order })
+                    }
+                    currentApps = apps
+                    if (draft != null) rows.removeAllViews()
+                    renderDisplayed()
+
                 }
         }
     }
@@ -81,6 +106,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        draft?.let { outState.putStringArrayList("reorderDraft", ArrayList(it)) }
         myPassClient.saveIdentity(outState)
         super.onSaveInstanceState(outState)
     }
@@ -105,6 +131,23 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(12))
         }
         column.addView(heading)
+        val controls = LinearLayout(this)
+        fun button(viewId: Int, label: Int, action: () -> Unit): View =
+            com.google.android.material.button.MaterialButton(this).apply {
+                id = viewId
+                setText(label)
+                setOnClickListener { action() }
+                controls.addView(this)
+            }
+        reorder = button(R.id.reorder_apps, R.string.reorder_apps) {
+            draft = currentApps.map { it.id }.toMutableList()
+            rows.removeAllViews()
+            renderDisplayed()
+        }
+        done = button(R.id.reorder_done, R.string.reorder_done) { saveOrder() }
+        cancel = button(R.id.reorder_cancel, R.string.reorder_cancel) { cancelOrder() }
+        column.addView(controls)
+
         compatibilityEntry = TextView(this).apply {
             id = R.id.provider_error_entry
             setText(R.string.provider_error_entry)
@@ -154,10 +197,76 @@ class MainActivity : AppCompatActivity() {
             contentDescription = getString(R.string.add_web_app)
             setOnClickListener { openPlaceholder(PlaceholderActivity.ACTION_ADD, null) }
         }
+        addButton = add
         root.addView(add, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
             setMargins(dp(16), dp(16), dp(16), dp(16))
         })
         setContentView(root)
+        renderDisplayed()
+    }
+
+    private fun renderDisplayed() {
+        val editing = draft != null
+        reorderBack.isEnabled = editing
+        reorder.visibility = if (editing || currentApps.isEmpty()) View.GONE else View.VISIBLE
+        done.visibility = if (editing) View.VISIBLE else View.GONE
+        cancel.visibility = done.visibility
+        done.isEnabled = !saving
+        cancel.isEnabled = !saving
+        addButton.visibility = if (editing) View.GONE else View.VISIBLE
+        val byId = currentApps.associateBy { it.id }
+        val displayed = draft?.mapNotNull { byId[it] } ?: currentApps
+        render(displayed)
+    }
+
+    private fun cancelOrder() {
+        if (saving) return
+        draft = null
+        rows.removeAllViews()
+        renderDisplayed()
+    }
+
+    private fun saveOrder() {
+        val ids = draft?.toList() ?: return
+        if (saving) return
+        saving = true
+        renderDisplayed()
+        lifecycleScope.launch {
+            // Once Done starts, commit and its widget notifications survive activity destruction.
+            val result = withContext(NonCancellable) {
+                repository.reorder(ids).also {
+                    if (it == ConfigurationWriteResult.Success) {
+                        MultiWidget.refresh(applicationContext)
+                        SingleWidget.refresh(applicationContext)
+                    }
+                }
+            }
+            if (isDestroyed) return@launch
+            saving = false
+            if (result == ConfigurationWriteResult.Success) {
+                currentApps = repository.ordered()
+                draft = null
+            } else {
+                Toast.makeText(this@MainActivity, R.string.reorder_failed, Toast.LENGTH_LONG).show()
+            }
+            rows.removeAllViews()
+            renderDisplayed()
+        }
+    }
+
+    internal fun moveDraft(id: String, target: Int): Boolean {
+        val order = draft ?: return false
+        val from = order.indexOf(id)
+        if (saving || from < 0 || target !in order.indices || from == target) return false
+        order.add(target, order.removeAt(from))
+        rows.removeAllViews()
+        renderDisplayed()
+        rows.findViewWithTag<View>(id)?.let { moved ->
+            moved.requestFocus()
+            moved.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+            moved.announceForAccessibility(getString(R.string.reorder_position, target + 1, order.size))
+        }
+        return true
     }
 
     private fun render(apps: List<ConfiguredApp>) {
@@ -187,9 +296,10 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(8), dp(12), dp(8), dp(12))
-            isClickable = true
+            isClickable = draft == null
             isFocusable = true
             setOnClickListener {
+                if (draft != null) return@setOnClickListener
                 if (clearing) Toast.makeText(this@MainActivity,
                     R.string.clearing_explanation, Toast.LENGTH_LONG).show()
                 else if (!compatibility.current().compatible) {
@@ -197,6 +307,7 @@ class MainActivity : AppCompatActivity() {
                 } else startActivity(ShellActivity.intent(this@MainActivity, app.id))
             }
             setOnLongClickListener {
+                if (draft != null) return@setOnLongClickListener true
                 openPlaceholder(PlaceholderActivity.ACTION_EDIT, app.id)
                 true
             }
@@ -235,6 +346,53 @@ class MainActivity : AppCompatActivity() {
         row.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
         row.contentDescription = if (clearing) getString(R.string.clearing_row_description, app.name)
             else getString(R.string.app_row_description, app.name, app.launchUrl)
+        if (draft != null) {
+            row.contentDescription = getString(R.string.reorder_row, app.name)
+            val handle = TextView(this).apply {
+                id = R.id.drag_handle
+                this.text = "☰"
+                textSize = 24f
+                gravity = Gravity.CENTER
+                contentDescription = getString(R.string.drag_app, app.name)
+                setOnTouchListener { view, event ->
+                    if (event.actionMasked == MotionEvent.ACTION_DOWN && !saving) {
+                        view.startDragAndDrop(ClipData.newPlainText("app", app.id),
+                            View.DragShadowBuilder(row), app.id, 0)
+                        true
+                    } else false
+                }
+            }
+            row.addView(handle, LinearLayout.LayoutParams(dp(48), dp(48)))
+            row.setOnDragListener { _, event ->
+                val id = event.localState as? String
+                when (event.action) {
+                    DragEvent.ACTION_DRAG_STARTED -> id != null && draft?.contains(id) == true
+                    DragEvent.ACTION_DROP -> id != null && !saving &&
+                        (id == app.id || moveDraft(id, draft?.indexOf(app.id) ?: -1))
+                    DragEvent.ACTION_DRAG_LOCATION -> {
+                        val scroll = findViewById<ScrollView>(R.id.app_list_scroll)
+                        val location = IntArray(2)
+                        row.getLocationOnScreen(location)
+                        val pointerY = location[1] + event.y
+                        scroll.getLocationOnScreen(location)
+                        val margin = dp(64)
+                        if (pointerY < location[1] + margin) scroll.smoothScrollBy(0, -dp(32))
+                        else if (pointerY > location[1] + scroll.height - margin) scroll.smoothScrollBy(0, dp(32))
+                        true
+                    }
+                    DragEvent.ACTION_DRAG_ENTERED,
+                    DragEvent.ACTION_DRAG_EXITED, DragEvent.ACTION_DRAG_ENDED -> true
+                    else -> false
+                }
+            }
+            val position = draft!!.indexOf(app.id)
+            if (position > 0) ViewCompat.addAccessibilityAction(row, getString(R.string.move_up)) { _, _ ->
+                moveDraft(app.id, (draft?.indexOf(app.id) ?: 0) - 1)
+            }
+            if (position < draft!!.lastIndex) ViewCompat.addAccessibilityAction(row, getString(R.string.move_down)) { _, _ ->
+                moveDraft(app.id, (draft?.indexOf(app.id) ?: -1) + 1)
+            }
+        }
         if (clearing) ViewCompat.setStateDescription(row, getString(R.string.clearing_state))
         return row
     }

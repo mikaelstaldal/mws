@@ -115,6 +115,96 @@ class MainScreenTest {
         controller.pause().stop().destroy()
     }
 
+    @Test fun reorderAccessibleCancelSaveAndRestart() {
+        runBlocking {
+            ConfigurationRepository(database).add(app("first", "Alpha", 0))
+            ConfigurationRepository(database).add(app("second", "Beta", 1))
+        }
+        var controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        var activity = controller.get()
+        await { rows(activity).childCount == 2 }
+        activity.findViewById<View>(R.id.reorder_apps).performClick()
+        assertNotNull(rows(activity).getChildAt(0).findViewById<View>(R.id.drag_handle))
+        val node = rows(activity).getChildAt(0).createAccessibilityNodeInfo()
+        val down = node.actionList.first { it.label == "Move down" }
+        assertTrue(rows(activity).getChildAt(0).performAccessibilityAction(down.id, null))
+        assertEquals("second", rows(activity).getChildAt(0).tag)
+        assertEquals(listOf("first", "second"), runBlocking {
+            ConfigurationRepository(database).ordered().map { it.id }
+        })
+        activity.findViewById<View>(R.id.reorder_cancel).performClick()
+        assertEquals("first", rows(activity).getChildAt(0).tag)
+        assertEquals(listOf("first", "second"), runBlocking {
+            ConfigurationRepository(database).ordered().map { it.id }
+        })
+        activity.findViewById<View>(R.id.reorder_apps).performClick()
+        assertTrue(activity.moveDraft("second", 0))
+        val up = rows(activity).getChildAt(1).createAccessibilityNodeInfo().actionList
+            .first { it.label == "Move up" }
+        assertTrue(rows(activity).getChildAt(1).performAccessibilityAction(up.id, null))
+        assertEquals("first", rows(activity).getChildAt(0).tag)
+        val target = rows(activity).getChildAt(0)
+        fun drag(action: Int): android.view.DragEvent {
+            val obtain = android.view.DragEvent::class.java.declaredMethods.first {
+                it.name == "obtain" && it.parameterTypes.firstOrNull() == Int::class.javaPrimitiveType
+            }
+            obtain.isAccessible = true
+            val args: Array<Any?> = obtain.parameterTypes.map { type ->
+                when (type) {
+                    Int::class.javaPrimitiveType -> action
+                    Float::class.javaPrimitiveType -> 0f
+                    Boolean::class.javaPrimitiveType -> false
+                    Any::class.java -> "second"
+                    else -> null
+                }
+            }.toTypedArray()
+            return obtain.invoke(null, *args) as android.view.DragEvent
+        }
+        assertTrue(target.dispatchDragEvent(drag(android.view.DragEvent.ACTION_DRAG_STARTED)))
+        assertTrue(target.dispatchDragEvent(drag(android.view.DragEvent.ACTION_DROP)))
+        assertEquals("second", rows(activity).getChildAt(0).tag)
+        activity.findViewById<View>(R.id.reorder_done).performClick()
+        await { activity.findViewById<View>(R.id.reorder_apps).visibility == View.VISIBLE }
+        controller.pause().stop().destroy()
+        controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        activity = controller.get()
+        await { rows(activity).childCount == 2 }
+        assertEquals("second", rows(activity).getChildAt(0).tag)
+        controller.pause().stop().destroy()
+    }
+
+    @Test fun draftSurvivesRecreationAndReconcilesMembership() {
+        runBlocking {
+            ConfigurationRepository(database).add(app("first", "Alpha", 0))
+            ConfigurationRepository(database).add(app("second", "Beta", 1))
+        }
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        var activity = controller.get()
+        await { rows(activity).childCount == 2 }
+        activity.findViewById<View>(R.id.reorder_apps).performClick()
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.add_web_app).visibility)
+        rows(activity).getChildAt(0).performClick()
+        rows(activity).getChildAt(0).performLongClick()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        activity.moveDraft("second", 0)
+        controller.recreate()
+        activity = controller.get()
+        await { rows(activity).childCount == 2 }
+        assertEquals("second", rows(activity).getChildAt(0).tag)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.reorder_done).visibility)
+        runBlocking {
+            ConfigurationRepository(database).remove("first")
+            ConfigurationRepository(database).add(app("third", "Gamma", 2))
+        }
+        await { rows(activity).childCount == 2 && rows(activity).getChildAt(1).tag == "third" }
+        activity.findViewById<View>(R.id.reorder_done).performClick()
+        await { activity.findViewById<View>(R.id.reorder_done).visibility == View.GONE }
+        assertEquals(listOf("second", "third"), runBlocking {
+            ConfigurationRepository(database).ordered().map { it.id }
+        })
+        controller.pause().stop().destroy()
+    }
+
     private fun rows(activity: MainActivity): LinearLayout {
         return activity.findViewById(R.id.app_rows)
     }

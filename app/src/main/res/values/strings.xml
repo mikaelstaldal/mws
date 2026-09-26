@@ -52,4 +52,13 @@
     <string name="widget_unavailable">App unavailable</string>
     <string name="widget_maintenance">App data maintenance</string>
     <string name="widget_pick_app">Choose an app</string>
+    <string name="reorder_apps">Reorder</string>
+    <string name="reorder_done">Done</string>
+    <string name="reorder_cancel">Cancel</string>
+    <string name="move_up">Move up</string>
+    <string name="move_down">Move down</string>
+    <string name="drag_app">Drag to reorder %1$s</string>
+    <string name="reorder_row">%1$s. Reordering.</string>
+    <string name="reorder_failed">Could not save order. The app list may have changed. Cancel and try again.</string>
+    <string name="reorder_position">Position %1$d of %2$d</string>
 </resources>
