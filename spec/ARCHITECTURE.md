@@ -44,7 +44,9 @@ This document records the technical design and constraints that implement
 - Credential-like parameter detection:
   - HTTPS: query and fragment keys.
   - Custom schemes: parsed with the registered syntax for the scheme. Every query component is split into `&`-separated pairs and UTF-8 percent-decoded, with `+` left as-is. For `mailto:`, both the query after the address and the URI fragment are scanned.
-  - A malformed escape, undecodable key or ambiguous component yields an "unparseable" key warning.
+  - A malformed escape, undecodable key or ambiguous component yields an "unparseable" key warning. Values are decoded only to validate them and are never retained. For custom schemes a second `?` or `#` (in the query or the fragment), or any Unicode whitespace or control character, is ambiguous. Any scheme other than HTTPS and the allowlist is reported as unparseable, never as safe.
+  - A fragment containing `?` (client-side routing such as `#/callback?access_token=…`) is scanned on both sides of its first `?`.
+  - `CredentialParameters` performs the scan and returns matching decoded keys only; `SensitiveUrlWarning` is the shared Continue/Cancel dialog, which shows bounded, sanitized key names and, for persisted URLs, the backup disclosure. Dismissal counts as Cancel.
 - Should `intent:` ever be allowlisted, it must be parsed defensively. Explicit components or packages are rejected, as are nested `file:`, `content:`, `javascript:`, `data:` and cleartext fallbacks. Any HTTPS fallback is re-evaluated under navigation policy. Adding any scheme requires a threat model.
 
 ## 4. Network security
@@ -139,7 +141,7 @@ The normative guarantee is the `ProfileStore` contract: after accepted deletion 
 | `iconReference` | Private icon asset reference |
 | `themeColor`, `backgroundColor` | Optional validated colors |
 | `sortPosition` | Canonical order position |
-| `sensitiveUrlConsent` | Record of consent for the exact serialized sensitive URL(s) (implementation detail of R§4.1) |
+| `sensitiveUrlConsent` | Record of consent for the exact serialized sensitive URL(s) (R§4.1): versioned SHA-256 digests of the consented serializations, so URL secrets are not duplicated. Unknown or corrupt records grant nothing; digests of URLs no longer stored are pruned |
 | `createdAt`, `updatedAt` | Timestamps |
 
 - There are never passwords, Authorization headers, cookie contents or page HTML.
