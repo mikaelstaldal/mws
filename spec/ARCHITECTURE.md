@@ -222,6 +222,7 @@ There is no cap on apps or widgets. Every add or update handles storage/allocati
 - Runs once after the first main-frame visible commit and DOM readiness. A fixed, non-credential-bearing script returns an immutable snapshot, which is accepted only for the current main-frame document identity.
 - It inspects at most the §7.3 node limits (16 manifest links, 128 page icons), caps each string at 8 KiB and the snapshot at 1 MiB, and ignores later mutations. Truncation that prevents safe parsing makes that candidate unusable.
 - The snapshot captures manifest and icon links in document order, resolved URLs (base URL honored), matching `media`, declared `type`, `crossorigin`, effective referrer policy, and the document title.
+- WebView does not expose the document response-header referrer policy to DOM extraction. Link and meta referrer policies are captured; absent a valid DOM override, native discovery uses the conservative `no-referrer` fallback rather than assuming the browser default. This can omit referrers required by a server, but cannot disclose more than its header policy permits.
 
 ### 8.4 Native discovery client
 

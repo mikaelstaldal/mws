@@ -42,6 +42,7 @@ class DiscoverySession(
     private val onDocument: (DiscoveryAttempt, DiscoveryDocumentResult) -> Unit,
     private val onOverallTimeout: (DiscoveryAttempt) -> Unit,
     private val onBlocked: (AttachBlock?) -> Unit,
+    private val onSnapshot: (DiscoveryAttempt, DiscoveryDomSnapshot) -> Unit = { _, _ -> },
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val ownershipScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -184,6 +185,8 @@ class DiscoverySession(
 
     private fun client(id: Long) = object : WebViewClient() {
         private var mainFrameUrl: String? = null
+        private val identity = DiscoveryDomIdentity()
+        private val script by lazy { host.context.assets.open("discovery-dom.js").bufferedReader().use { it.readText() } }
 
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             if (id != generation) return true
@@ -193,6 +196,7 @@ class DiscoverySession(
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
+            identity.started()
             mainFrameUrl = url
             if (id == generation && UrlPolicy.parseHttps(url) == null)
                 failDocument(id, DiscoveryDocumentFailure.HTTPS_REQUIRED)
@@ -201,8 +205,25 @@ class DiscoverySession(
         override fun onPageCommitVisible(view: WebView, url: String) {
             val state = attempt?.takeIf { it.id == id } ?: return
             if (state.commit(url)) {
+                val document = identity.request()
+                if (document != null && state.documentResult?.finalUrl != null) extract(view, state, document)
                 onDocument(state, checkNotNull(state.documentResult))
                 scheduleTimer()
+            }
+        }
+
+        private fun extract(view: WebView, state: DiscoveryAttempt, document: Long) {
+            if (id != generation || attempt !== state || bound?.webView !== view ||
+                !identity.accepts(document) || state.remainingOverall(clock()) == null) return
+            view.evaluateJavascript(script) { raw ->
+                if (id != generation || attempt !== state || bound?.webView !== view ||
+                    !identity.accepts(document) || state.remainingOverall(clock()) == null) return@evaluateJavascript
+                if (raw == "\"mws-dom-pending\"") {
+                    // DOM readiness may follow visible commit; bounded by the attempt deadline.
+                    handler.postDelayed({ extract(view, state, document) }, 50)
+                } else {
+                    DiscoveryDom.parseEvaluation(raw)?.let { onSnapshot(state, it) }
+                }
             }
         }
 
