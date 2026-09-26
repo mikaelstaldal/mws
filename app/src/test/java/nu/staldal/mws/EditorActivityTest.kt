@@ -8,6 +8,8 @@ import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import com.google.android.material.textfield.TextInputLayout
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CompletableDeferred
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -24,16 +26,20 @@ import org.robolectric.shadows.ShadowLooper
 class EditorActivityTest {
     private val context get() = RuntimeEnvironment.getApplication()
     private lateinit var repository: ConfigurationRepository
+    private var maintenanceStore: MaintenanceStore? = null
     private var controller: ActivityController<EditorActivity>? = null
 
     @Before fun prepare() {
         repository = ConfigurationRepository(ConfigurationDatabase.shared(context))
         clearApps()
+        runBlocking { ShellServices.shared(context).profiles.prepareConfiguration() }
     }
 
     @After fun cleanup() {
         controller?.let { if (!it.get().isDestroyed) it.pause().stop().destroy() }
         clearApps()
+        ShellServices.install(null)
+        maintenanceStore?.close()
     }
 
     private fun clearApps() = runBlocking {
@@ -344,6 +350,168 @@ class EditorActivityTest {
         await { notice.visibility == View.VISIBLE }
         runBlocking { repository.finishClearing("a", 0) }
         await { notice.visibility == View.GONE }
+    }
+
+    private fun installMaintenance(delete: (String) -> Boolean) {
+        val store = MaintenanceStore(context).also { maintenanceStore = it }
+        store.createInstallationSentinel()
+        val key = ProviderKey("test.provider", "1", 28, "x86_64")
+        val compatibility = ProviderCompatibility({ ProviderSnapshot(key, true) },
+            { ProviderSelfTestResult(it, true, true, true, true, true, true) },
+            floors = mapOf(key.packageName to listOf(1)))
+        val shells = LiveShellRegistry()
+        val backend = object : WebProfileBackend {
+            override fun deleteProfile(name: String) = delete(name)
+            override fun profileExists(name: String) = false
+            override fun createBoundWebView(context: android.content.Context, name: String):
+                android.webkit.WebView = error("Editor must not load an app profile")
+            override fun setThirdPartyCookies(webView: android.webkit.WebView, allow: Boolean) = Unit
+        }
+        val profiles = ProfileManager(repository, store, compatibility, backend, shells,
+            object : AppNativeData {
+                override fun deleteIcons(appId: String) = Unit
+                override fun widgetsChanged() = Unit
+            }, main = Dispatchers.Unconfined, io = Dispatchers.Unconfined)
+        ShellServices.install(ShellServices(repository, compatibility, shells, profiles, IconStore(context)))
+    }
+
+    private fun confirmClear(activity: EditorActivity) {
+        activity.findViewById<View>(R.id.editor_clear).performClick()
+        ShadowLooper.idleMainLooper()
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+    }
+
+    @Test fun clearFailureOffersRetryAndPreservesConfiguration() {
+        var failDeletion = true
+        val calls = mutableListOf<String>()
+        installMaintenance { name ->
+            calls += name
+            if (failDeletion) throw java.io.IOException("Deletion failed")
+            true
+        }
+        val original = app("a", "https://a.example/")
+        runBlocking { repository.add(original) }
+        val activity = open("a")
+        confirmClear(activity)
+        await { activity.findViewById<TextView>(R.id.editor_maintenance_status).text ==
+            activity.getString(R.string.editor_clear_failed) }
+        assertEquals(ProfileState.CLEARING, saved().single().profileState)
+        assertFalse(activity.findViewById<View>(R.id.editor_clear).isEnabled)
+        failDeletion = false
+        activity.findViewById<View>(R.id.editor_clear_retry).performClick()
+        await { activity.findViewById<TextView>(R.id.editor_maintenance_status).text ==
+            activity.getString(R.string.editor_clear_done) }
+        val record = saved().single()
+        assertEquals(original.copy(profileGeneration = 1, updatedAt = record.updatedAt), record)
+        assertEquals(listOf(ProfileNames.app("a", 0), ProfileNames.app("a", 0)), calls)
+    }
+
+    @Test fun recreationKeepsClearInFlightAndRetainsDeferredOutcome() {
+        installMaintenance { throw IllegalStateException("Profile loaded") }
+        val gate = CompletableDeferred<Unit>()
+        ShellServices.shared(context).shells.register("a") { gate.await() }
+        runBlocking { repository.add(app("a", "https://a.example/")) }
+        var activity = open("a")
+        confirmClear(activity)
+        await { saved().single().profileState == ProfileState.CLEARING }
+        controller!!.recreate()
+        activity = controller!!.get()
+        await { activity.findViewById<View>(R.id.editor_remove).isEnabled }
+        assertFalse(activity.findViewById<View>(R.id.editor_clear_retry).isEnabled)
+        assertFalse(activity.findViewById<View>(R.id.editor_save).isEnabled)
+        gate.complete(Unit)
+        await { activity.findViewById<TextView>(R.id.editor_maintenance_status).text ==
+            activity.getString(R.string.editor_clear_deferred) }
+        controller!!.recreate()
+        activity = controller!!.get()
+        await { activity.findViewById<TextView>(R.id.editor_maintenance_status).text ==
+            activity.getString(R.string.editor_clear_deferred) }
+        assertEquals(1L, saved().single().profileGeneration)
+    }
+
+    @Test fun postCommitRemovalFailureStillClosesEditor() {
+        installMaintenance { throw java.io.IOException("Profile cleanup failed") }
+        runBlocking { repository.add(app("a", "https://a.example/")) }
+        val activity = open("a")
+        activity.findViewById<View>(R.id.editor_remove).performClick()
+        ShadowLooper.idleMainLooper()
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+        await { saved().isEmpty() && activity.isFinishing }
+        assertEquals(activity.getString(R.string.editor_remove_pending),
+            org.robolectric.shadows.ShadowToast.getTextOfLatestToast())
+    }
+
+    @Test fun removalSurvivesRecreationAndBlocksImeSave() {
+        installMaintenance { true }
+        val gate = CompletableDeferred<Unit>()
+        ShellServices.shared(context).shells.register("a") { gate.await() }
+        runBlocking { repository.add(app("a", "https://a.example/")) }
+        var activity = open("a")
+        activity.findViewById<View>(R.id.editor_remove).performClick()
+        ShadowLooper.idleMainLooper()
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+        activity.name().setText("Must not save")
+        activity.name().onEditorAction(android.view.inputmethod.EditorInfo.IME_ACTION_DONE)
+        assertEquals("a", saved().single().name)
+        controller!!.recreate()
+        activity = controller!!.get()
+        ShadowLooper.idleMainLooper()
+        assertFalse(activity.findViewById<View>(R.id.editor_save).isEnabled)
+        assertFalse(activity.findViewById<View>(R.id.editor_remove).isEnabled)
+        gate.complete(Unit)
+        await { saved().isEmpty() && activity.isFinishing }
+    }
+
+    @Test fun deferredClearReturnsUsableAndExplainsRestart() {
+        installMaintenance { throw IllegalStateException("Profile still loaded") }
+        runBlocking { repository.add(app("a", "https://a.example/")) }
+        val activity = open("a")
+        confirmClear(activity)
+        await { activity.findViewById<TextView>(R.id.editor_maintenance_status).text ==
+            activity.getString(R.string.editor_clear_deferred) }
+        assertEquals(ProfileState.ACTIVE, saved().single().profileState)
+        assertEquals(1L, saved().single().profileGeneration)
+    }
+
+    @Test fun maintenanceRequiresConfirmationAndCancelPreservesRecord() {
+        runBlocking { repository.add(app("a", "https://a.example/")) }
+        val activity = open("a")
+        val original = saved()
+        activity.findViewById<View>(R.id.editor_clear).performClick()
+        ShadowLooper.idleMainLooper()
+        val dialog = latestDialog()
+        val message = dialog.findViewById<TextView>(android.R.id.message)!!.text.toString()
+        listOf("cookies", "DOM storage", "IndexedDB/Web SQL", "Cache Storage", "HTTP caches",
+            "service workers", "HTTP-auth", "permission", "form data", "browsing history",
+            "Android app-level permissions", "MyPass").forEach { assertTrue(message.contains(it)) }
+        dialog.press(DialogInterface.BUTTON_NEGATIVE)
+        assertEquals(original, saved())
+        activity.findViewById<View>(R.id.editor_remove).performClick()
+        ShadowLooper.idleMainLooper()
+        latestDialog().press(DialogInterface.BUTTON_NEGATIVE)
+        assertEquals(original, saved())
+        assertFalse(activity.isFinishing)
+    }
+
+    @Test fun removeConfirmationDeletesRecordEvenWithIncompatibleProvider() {
+        runBlocking { repository.add(app("a", "https://a.example/")) }
+        val activity = open("a")
+        activity.findViewById<View>(R.id.editor_remove).performClick()
+        ShadowLooper.idleMainLooper()
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+        await { saved().isEmpty() && activity.isFinishing }
+    }
+
+    @Test fun clearingDisablesClearAndExposesRetryAndRemove() {
+        installMaintenance { true }
+        runBlocking { repository.add(app("a", "https://a.example/").copy(
+            profileState = ProfileState.CLEARING, profileGeneration = 1, retiringProfileGeneration = 0)) }
+        val activity = open("a")
+        assertFalse(activity.findViewById<View>(R.id.editor_clear).isEnabled)
+        assertEquals(View.VISIBLE, activity.findViewById<View>(R.id.editor_clear_retry).visibility)
+        assertTrue(activity.findViewById<View>(R.id.editor_remove).isEnabled)
+        activity.findViewById<View>(R.id.editor_clear_retry).performClick()
+        await { activity.findViewById<TextView>(R.id.editor_maintenance_status).text.isNotEmpty() }
     }
 
     @Test fun removedAppClosesEditor() {

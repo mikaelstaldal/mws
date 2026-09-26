@@ -35,4 +35,8 @@
     <item name="editor_discovery_icon" type="id" />
     <item name="editor_suggested_name" type="id" />
     <item name="editor_refresh_details" type="id" />
+    <item name="editor_clear" type="id" />
+    <item name="editor_clear_retry" type="id" />
+    <item name="editor_remove" type="id" />
+    <item name="editor_maintenance_status" type="id" />
 </resources>

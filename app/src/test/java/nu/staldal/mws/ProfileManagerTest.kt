@@ -210,6 +210,9 @@ class ProfileManagerTest {
         val app = newApp(generation = 2)
         val other = newApp(generation = 2)
         val manager = started()
+        store.putWidget(WidgetRecord(4243, WidgetType.MULTI_APP, SelectionMode.SELECTED_SUBSET,
+            setOf(app.id, other.id)))
+        val before = repository.get(app.id)!!
         val bound = (attach(manager, app.id) as AttachResult.Attached).bound
         val otherBound = (attach(manager, other.id) as AttachResult.Attached).bound
         for (generation in listOf(2L, 3L)) store.putPermissionDecision(PermissionDecision(app.id,
@@ -225,6 +228,10 @@ class ProfileManagerTest {
         val saved = repository.get(app.id)!!
         assertEquals(ProfileState.ACTIVE, saved.profileState)
         assertEquals(3L, saved.profileGeneration)
+        assertEquals(before.copy(profileGeneration = 3, updatedAt = saved.updatedAt), saved)
+        assertEquals(setOf(app.id, other.id), store.widget(4243)?.selectedAppIds)
+        assertTrue(deletedIcons.isEmpty())
+        store.deleteWidget(4243)
         assertNull(store.permissionDecision(app.id, 2, "https://example.com", PermissionCapability.GEOLOCATION))
         assertNotNull(store.permissionDecision(app.id, 3, "https://example.com", PermissionCapability.GEOLOCATION))
         assertNotNull(store.permissionDecision(other.id, 2, "https://example.com", PermissionCapability.GEOLOCATION))

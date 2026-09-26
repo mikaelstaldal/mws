@@ -45,6 +45,14 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var clearingNotice: TextView
     private lateinit var loadError: TextView
     private lateinit var myPassStatus: MyPassStatusIndicator
+    private lateinit var clearButton: MaterialButton
+    private lateinit var retryButton: MaterialButton
+    private lateinit var removeButton: MaterialButton
+    private lateinit var maintenanceStatus: TextView
+    private val maintenance get() = ShellServices.shared(this).editorMaintenance
+    private val maintenanceState get() = appId?.let { maintenance.state(it).value } ?: EditorMaintenanceState()
+    private val maintaining get() = maintenanceState.clearing
+    private val removing get() = maintenanceState.removing || maintenanceState.removalResult != null
     private lateinit var saveButton: View
 
     private val appId: String? get() = intent.getStringExtra(EXTRA_APP_ID)
@@ -202,6 +210,13 @@ class EditorActivity : AppCompatActivity() {
             hostName = state.getString(STATE_HOST_NAME)
         }
         buildScreen()
+        appId?.let { id ->
+            lifecycleScope.launch {
+                maintenance.state(id).collect { state ->
+                    renderMaintenance(state)
+                }
+            }
+        }
         load()
     }
 
@@ -345,6 +360,45 @@ class EditorActivity : AppCompatActivity() {
         }
         buttons.addView(saveButton, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
         column.addView(buttons)
+        maintenanceStatus = TextView(this).apply { id = R.id.editor_maintenance_status }
+        column.addView(maintenanceStatus)
+        clearButton = MaterialButton(this).apply {
+            id = R.id.editor_clear
+            setText(R.string.editor_clear)
+            visibility = if (appId == null) View.GONE else View.VISIBLE
+            isEnabled = false
+            setOnClickListener {
+                AlertDialog.Builder(this@EditorActivity)
+                    .setTitle(R.string.editor_clear)
+                    .setMessage(R.string.editor_clear_confirmation)
+                    .setNegativeButton(R.string.editor_cancel, null)
+                    .setPositiveButton(R.string.editor_clear) { _, _ -> clearData() }
+                    .show()
+            }
+        }
+        column.addView(clearButton)
+        retryButton = MaterialButton(this).apply {
+            id = R.id.editor_clear_retry
+            setText(R.string.editor_retry)
+            visibility = View.GONE
+            setOnClickListener { clearData() }
+        }
+        column.addView(retryButton)
+        removeButton = MaterialButton(this).apply {
+            id = R.id.editor_remove
+            setText(R.string.editor_remove)
+            visibility = if (appId == null) View.GONE else View.VISIBLE
+            isEnabled = false
+            setOnClickListener {
+                AlertDialog.Builder(this@EditorActivity)
+                    .setTitle(R.string.editor_remove)
+                    .setMessage(R.string.editor_remove_confirmation)
+                    .setNegativeButton(R.string.editor_cancel, null)
+                    .setPositiveButton(R.string.editor_remove) { _, _ -> removeApp() }
+                    .show()
+            }
+        }
+        column.addView(removeButton)
         setContentView(ScrollView(this).apply {
             id = R.id.editor_scroll
             addView(column)
@@ -395,7 +449,7 @@ class EditorActivity : AppCompatActivity() {
             }
             repository.observe(id).collect { app ->
                 if (app == null) {
-                    if (!saving) {
+                    if (!saving && !removing) {
                         Toast.makeText(this@EditorActivity, R.string.app_unavailable, Toast.LENGTH_LONG).show()
                         finish()
                     }
@@ -405,9 +459,64 @@ class EditorActivity : AppCompatActivity() {
                 if (!loaded) populate(app)
                 clearingNotice.visibility =
                     if (app.profileState == ProfileState.CLEARING) View.VISIBLE else View.GONE
+                updateMaintenanceButtons()
                 if (urlLayout.error != null) showUrlError()
             }
         }
+    }
+
+    private fun updateMaintenanceButtons() {
+        clearButton.isEnabled = loaded && !saving && !maintaining && !removing &&
+            saved?.profileState == ProfileState.ACTIVE
+        removeButton.isEnabled = loaded && !saving && !removing
+        val failed = maintenanceState.clearResult.let { it is ClearResult.Failed || it == ClearResult.Incompatible }
+        retryButton.visibility = if (saved?.profileState == ProfileState.CLEARING || failed)
+            View.VISIBLE else View.GONE
+        retryButton.isEnabled = !saving && !maintaining && !removing
+        saveButton.isEnabled = loaded && !saving && !maintaining && !removing
+    }
+
+    private fun renderMaintenance(state: EditorMaintenanceState) {
+        updateMaintenanceButtons()
+        val message = when {
+            state.removalFailed -> R.string.editor_remove_failed
+            state.clearing -> R.string.editor_clearing_notice
+            else -> when (state.clearResult) {
+                ClearResult.Cleared -> R.string.editor_clear_done
+                ClearResult.PendingRestart -> R.string.editor_clear_deferred
+                ClearResult.Incompatible -> R.string.editor_clear_incompatible
+                ClearResult.MissingApp -> R.string.app_unavailable
+                is ClearResult.Failed -> R.string.editor_clear_failed
+                null -> null
+            }
+        }
+        if (message != null) maintenanceStatus.setText(message)
+        state.removalResult?.let { result ->
+            Toast.makeText(applicationContext, when (result) {
+                RemovalResult.Removed, RemovalResult.MissingApp -> R.string.editor_removed
+                RemovalResult.ProfileDeletionPending -> R.string.editor_remove_pending
+                is RemovalResult.NativeDeletionPending -> R.string.editor_remove_native_pending
+            }, Toast.LENGTH_LONG).show()
+            finish()
+        }
+    }
+
+    private fun clearData() {
+        val id = appId ?: return
+        if (saving || maintaining || removing) return
+        cancelDiscovery()
+        discoveryStatus.setText(R.string.editor_discovery_stopped)
+        maintenance.clear(id)
+        updateMaintenanceButtons()
+    }
+
+    private fun removeApp() {
+        val id = appId ?: return
+        if (saving || removing) return
+        cancelDiscovery()
+        discoveryStatus.setText(R.string.editor_discovery_stopped)
+        maintenance.remove(id)
+        updateMaintenanceButtons()
     }
 
     /** Fills the fields once; after recreation the views already hold the draft. */
@@ -504,7 +613,7 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun save() {
-        if (saving || !loaded) return
+        if (saving || maintaining || removing || !loaded) return
         val urlValid = showUrlError()
         val nameValid = showNameError()
         if (!urlValid || !nameValid) {
@@ -520,11 +629,11 @@ class EditorActivity : AppCompatActivity() {
         val base = draft.record(saved, saved?.id ?: UUID.randomUUID().toString(), now)
         val record = stages?.apply(base) ?: base
         saving = true
-        saveButton.isEnabled = false
+        updateMaintenanceButtons()
         confirmSensitive(record, EditorConsent.pending(record)) { consented ->
             if (consented == null) {
                 saving = false
-                saveButton.isEnabled = true
+                updateMaintenanceButtons()
                 urlLayout.error = getString(R.string.editor_sensitive_declined)
                 urlField.requestFocus()
             } else persist(EditorConsent.prune(consented))
@@ -563,7 +672,7 @@ class EditorActivity : AppCompatActivity() {
                 }
                 else -> {
                     saving = false
-                    saveButton.isEnabled = true
+                    updateMaintenanceButtons()
                     Toast.makeText(this@EditorActivity, R.string.editor_save_failed, Toast.LENGTH_LONG).show()
                 }
             }

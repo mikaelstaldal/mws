@@ -26,6 +26,8 @@ class ShellServices(
     private val selfTest: (suspend () -> Unit)? = null,
     private val reconcileWidgets: (suspend () -> Unit)? = null,
 ) {
+    val editorMaintenance = EditorMaintenance(profiles, repository)
+
     private val startupLock = Mutex()
     private var startup: StartupReport? = null
     private var startupCompatible = false

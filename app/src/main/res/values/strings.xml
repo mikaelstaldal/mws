@@ -113,4 +113,17 @@
     <string name="editor_discovery_cross_origin">The site redirected to another origin. Its details will not be used.</string>
     <string name="editor_discovery_credentialless">Site details loaded without credentials. Authenticated metadata may be unavailable.</string>
     <string name="editor_discovery_stopped">Available details and defaults are ready to save. Refresh to try discovery again.</string>
+    <string name="editor_clear">Clear cookies and site data</string>
+    <string name="editor_clear_confirmation">This app will be signed out and lose its offline and site state. Deletes cookies, DOM storage, IndexedDB/Web SQL, Cache Storage and HTTP caches, service workers, HTTP-auth state, site permission decisions, form data, browsing history, and all other data in this app’s isolated web profile. Android app-level permissions are not revoked. Configuration, metadata, icon, order, widgets, MyPass entries, and other apps are preserved.</string>
+    <string name="editor_retry">Retry</string>
+    <string name="editor_clear_done">Cookies and site data cleared.</string>
+    <string name="editor_clear_deferred">Fresh empty site data is ready. Old site data will be deleted at the next app restart.</string>
+    <string name="editor_clear_failed">Could not clear site data. Retry to finish clearing.</string>
+    <string name="editor_clear_incompatible">Site data cannot be cleared with this WebView provider. Retry when compatibility returns.</string>
+    <string name="editor_remove">Remove</string>
+    <string name="editor_remove_confirmation">Remove this app and its configuration, icon, and site data? Its live shell will close and widgets will be updated. MyPass entries and other apps are preserved.</string>
+    <string name="editor_removed">App removed.</string>
+    <string name="editor_remove_pending">Local removal complete; web data cleanup pending until restart or WebView compatibility returns.</string>
+    <string name="editor_remove_failed">Could not start removal. Try Remove again.</string>
+    <string name="editor_remove_native_pending">Removal started; local cleanup is pending and will resume at the next app restart.</string>
 </resources>
