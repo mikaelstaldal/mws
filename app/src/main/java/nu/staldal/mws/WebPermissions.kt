@@ -20,6 +20,12 @@ internal class WebPermissions(
     savedState: android.os.Bundle? = null,
     private val app: () -> ConfiguredApp?,
 ) : WebChromeClient() {
+    var newWindow: ((WebView, Boolean, android.os.Message) -> Boolean)? = null
+
+    override fun onCreateWindow(view: WebView, isDialog: Boolean, isUserGesture: Boolean,
+        resultMsg: android.os.Message): Boolean =
+        !disposed && (newWindow?.invoke(view, isUserGesture, resultMsg) == true)
+
     private val store = MaintenanceStore(activity)
     private var disposed = false
     private data class Pending(val token: Any, val run: (() -> Unit) -> Unit, val deny: () -> Unit)

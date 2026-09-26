@@ -107,6 +107,8 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         taskDescriptionJob?.cancel()
         webPermissions.dispose()
         handoff.close()
+        windowRouting?.close()
+        windowRouting = null
         myPass.close()
         holder?.detach(this)
         super.onDestroy()
@@ -118,12 +120,30 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         super.onSaveInstanceState(outState)
     }
 
+    private var windowRouting: NewWindowRouting? = null
+
     override fun onReady(webView: WebView) {
         (webView.parent as? ViewGroup)?.removeView(webView)
         container.removeAllViews()
         overlay = null
         holder?.record?.let(presentation::apply)
         if (holder?.hasVisiblePaint != true) webView.setBackgroundColor(presentation.backgroundColor)
+        windowRouting?.close()
+        windowRouting = NewWindowRouting(
+            create = { servicesOwner ->
+                ShellServices.shared(application).profiles.createWindowProbe(this, servicesOwner)
+            },
+            owner = { holder?.bound },
+            release = { ShellServices.shared(application).profiles.release(it) },
+            scope = { holder?.record?.scope },
+            route = { url, inside ->
+                if (inside) holder?.openWindowDestination(webView, url) else handoff.openInBrowser(url)
+            },
+            reject = { handoff.notice(it) },
+        )
+        webPermissions.newWindow = { source, gesture, message ->
+            windowRouting?.open(source, gesture, message) == true
+        }
         webView.webChromeClient = webPermissions
         registerForContextMenu(webView)
         container.addView(webView, FrameLayout.LayoutParams(-1, -1))
@@ -529,6 +549,12 @@ class ShellHolder(
     private fun stopTimer() {
         timer?.let(timerHandler::removeCallbacks)
         timer = null
+    }
+
+    /** New-window GETs need the same identity, form-fill and Basic-auth setup as native loads. */
+    internal fun openWindowDestination(webView: WebView, url: String) {
+        if (closed != null || bound?.webView !== webView || UrlPolicy.parseNavigation(url) == null) return
+        load(webView, url, initial = false)
     }
 
     private fun load(webView: WebView, url: String, initial: Boolean) {

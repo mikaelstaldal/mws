@@ -111,7 +111,7 @@ class ShellServices(
                 })
             val runner = ProviderSelfTestRunner(source, maintenance, listOf(
                 IsolationProbe(context, profiles), DeletionProbe(context), BasicAuthProbe(context, profiles),
-                FormFillProbe(context, profiles)))
+                FormFillProbe(context, profiles), NewWindowProbe(context, profiles)))
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 repository.apps.collect {
                     try { profiles.prepareConfiguration(); refreshWidgets(context) }

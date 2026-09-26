@@ -429,6 +429,13 @@ class ProfileManager(
         }
     }
 
+    /** Synchronous onCreateWindow path: only an already-live, compatible profile can be reused. */
+    internal fun createWindowProbe(context: Context, owner: BoundWebView): BoundWebView? {
+        if (!compatibility.current().features.newWindowRouting ||
+            live[owner.profileName]?.contains(owner.webView) != true) return null
+        return bind(context, owner.profileName)
+    }
+
     /** Applies a changed third-party-cookie setting to a live WebView without reloading. Main thread only. */
     fun applyThirdPartyCookies(bound: BoundWebView, allow: Boolean) {
         backend.setThirdPartyCookies(bound.webView, allow)
