@@ -84,7 +84,8 @@ data class EditorDraft(
             scope = originScope(url), createdAt = now, updatedAt = now)
         val derived = if (saved == null || saved.configuredUrl == configured) base
             else base.copy(finalUrl = null, launchUrl = configured, scope = originScope(url),
-                manifestSnapshot = null, themeColor = null, backgroundColor = null)
+                manifestSnapshot = null, themeColor = null, backgroundColor = null,
+                iconReference = base.iconReference.takeUnless { changesOrigin(saved, url) })
         return derived.copy(name = name, nameSource = nameSource, configuredUrl = configured,
             allowThirdPartyCookies = allowThirdPartyCookies, updatedAt = now)
     }

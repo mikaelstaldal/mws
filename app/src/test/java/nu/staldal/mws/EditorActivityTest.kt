@@ -304,14 +304,71 @@ class EditorActivityTest {
         assertEquals(original[0], saved()[0])
     }
 
-    @Test fun originChangingEditIsNotSavedYet() {
+    @Test fun originChangingEditRequiresSaveTimeConfirmation() {
         runBlocking { repository.add(app("a", "https://a.example/")) }
         val activity = open("a")
         assertEquals(View.GONE, activity.findViewById<View>(R.id.editor_clearing_notice).visibility)
         activity.url().setText("other.example")
         activity.save()
-        assertEquals(activity.getString(R.string.editor_origin_change_unavailable), activity.urlError())
+        assertNull(activity.urlError())
+        assertTrue(latestDialog().isShowing)
+        latestDialog().press(DialogInterface.BUTTON_NEGATIVE)
         assertEquals("https://a.example/", saved()[0].configuredUrl)
+    }
+
+    @Test fun confirmedOriginChangeStoresNewUrlAndRetiresProfile() {
+        runBlocking { repository.add(app("a", "https://a.example/").copy(iconReference = "old-icon")) }
+        val activity = open("a")
+        activity.url().setText("https://other.example/path")
+        activity.save()
+        assertEquals("https://a.example/", saved()[0].configuredUrl)
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+        await { saved()[0].configuredUrl == "https://other.example/path" }
+        assertEquals(1L, saved()[0].profileGeneration)
+        assertNull(saved()[0].iconReference)
+        assertEquals("https://other.example/path", saved()[0].launchUrl)
+    }
+
+    @org.robolectric.annotation.Config(sdk = [28])
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test fun originSavePrunesOldIconAndKeepsExactDraftDiscoveredIcon() {
+        installMaintenance { true }
+        fun icon(url: String) = SelectedIcon(IconCandidate(url, IconCandidate.Source.FAVICON),
+            android.graphics.Bitmap.createBitmap(48, 48, android.graphics.Bitmap.Config.ARGB_8888))
+        val icons = IconStore(context)
+        val reference = icons.save("a", icon("https://a.example/favicon.ico"))
+        val old = app("a", "https://a.example/").copy(iconReference = reference)
+        runBlocking { repository.add(old) }
+        val activity = open("a")
+        activity.url().setText("https://other.example/path")
+        val stages = EditorDiscovery(old, "https://other.example/path")
+        stages.icon = icon("https://other.example/favicon.ico")
+        EditorActivity::class.java.getDeclaredField("stages").apply { isAccessible = true }
+            .set(activity, stages)
+        activity.save()
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+        await { saved()[0].profileState == ProfileState.ACTIVE && saved()[0].profileGeneration == 1L }
+        assertFalse(icons.exists(reference))
+        assertNotEquals(reference, saved()[0].iconReference)
+        assertTrue(icons.exists(saved()[0].iconReference!!))
+        icons.delete("a")
+    }
+
+    @Test fun sensitiveOriginSaveRequiresBothConsentsAfterCancelAndRepeatSave() {
+        runBlocking { repository.add(app("a", "https://a.example/")) }
+        val activity = open("a")
+        activity.url().setText("https://other.example/?token=abc123")
+        activity.save()
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+        assertEquals(activity.getString(R.string.editor_origin_change_confirmation),
+            latestDialog().findViewById<TextView>(android.R.id.message)!!.text.toString())
+        latestDialog().press(DialogInterface.BUTTON_NEGATIVE)
+        assertEquals("https://a.example/", saved()[0].configuredUrl)
+        activity.save()
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+        latestDialog().press(DialogInterface.BUTTON_POSITIVE)
+        await { saved()[0].configuredUrl == "https://other.example/?token=abc123" }
+        assertTrue(SensitiveUrlConsent.parse(saved()[0].sensitiveUrlConsent).covers(saved()[0].configuredUrl))
     }
 
     @Test fun clearingEditorAllowsOnlySameOriginChanges() {
@@ -370,6 +427,8 @@ class EditorActivityTest {
         val profiles = ProfileManager(repository, store, compatibility, backend, shells,
             object : AppNativeData {
                 override fun deleteIcons(appId: String) = Unit
+                override fun pruneIcons(appId: String, retainedReference: String?) =
+                    IconStore(context).prune(appId, retainedReference)
                 override fun widgetsChanged() = Unit
             }, main = Dispatchers.Unconfined, io = Dispatchers.Unconfined)
         ShellServices.install(ShellServices(repository, compatibility, shells, profiles, IconStore(context)))

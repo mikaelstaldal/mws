@@ -27,6 +27,8 @@ class ProfileManagerTest {
     private val closedShells = mutableListOf<String>()
     private val deletedIcons = mutableListOf<String>()
     private var widgetUpdates = 0
+    private var failPrune = false
+    private val prunedIcons = mutableListOf<Pair<String, String?>>()
     private var failIconReconciliation = false
     private var iconReconciliations = 0
     private var protectedIconApps = emptySet<String>()
@@ -55,6 +57,10 @@ class ProfileManagerTest {
         object : AppNativeData {
             override fun deleteIcons(appId: String) { deletedIcons += appId }
             override fun widgetsChanged() { widgetUpdates++ }
+            override fun pruneIcons(appId: String, retainedReference: String?) {
+                if (failPrune) error("Icon storage unavailable")
+                prunedIcons += appId to retainedReference
+            }
             override fun reconcileIcons(apps: List<ConfiguredApp>, pending: List<JournalEntry>) {
                 iconReconciliations++
                 protectedIconApps = pending.mapNotNull { it.intent.appId }.toSet()
@@ -76,6 +82,120 @@ class ProfileManagerTest {
 
     private fun attach(manager: ProfileManager, id: String) = runBlocking {
         manager.createAppWebView(context, id)
+    }
+
+    @Test fun originChangeReplaysEveryReservationCrashBoundary() = runBlocking {
+        for (boundary in 0..4) {
+            val old = newApp(generation = 4)
+            val snapshot = old.copy(configuredUrl = "https://new.example/path",
+                launchUrl = "https://new.example/path", scope = "https://new.example/",
+                iconReference = null, updatedAt = 20)
+            val entry = store.begin(OperationIntent(OperationType.UPDATE_URL, old.id,
+                oldGeneration = 4, newGeneration = 5,
+                resourceId = OriginChangeSnapshot.encode(snapshot)), 2)
+            if (boundary >= 1) repository.applyOriginSnapshot(snapshot, 4, 5)
+            if (boundary >= 2) store.completeStep(entry.id, 0)
+            if (boundary >= 3) store.completeStep(entry.id, 1)
+            if (boundary == 4) store.discardCompleted(entry.id)
+            compatible = false
+            val fresh = manager()
+            fresh.startupMaintenance()
+            val current = repository.get(old.id)!!
+            assertEquals(snapshot.configuredUrl, current.configuredUrl)
+            assertEquals(5L, current.profileGeneration)
+            assertEquals(4L, current.retiringProfileGeneration)
+            assertEquals(ProfileState.CLEARING, current.profileState)
+            compatible = true
+            // Neither generation can attach while cleanup is outstanding.
+            assertEquals(AttachResult.Blocked(AttachBlock.CLEARING), attach(fresh, old.id))
+            fresh.startupMaintenance()
+            assertEquals(ProfileState.ACTIVE, repository.get(old.id)!!.profileState)
+            assertEquals(5L, repository.get(old.id)!!.profileGeneration)
+            assertTrue(ProfileNames.app(old.id, 4) in backend.deleteCalls)
+            assertFalse(ProfileNames.app(old.id, 5) in backend.deleteCalls)
+        }
+    }
+
+    @Test fun replayAfterCleanupDoesNotReserveAnotherGenerationOrRestoreOldMetadata() = runBlocking {
+        val old = newApp(generation = 4)
+        val snapshot = old.copy(configuredUrl = "https://new.example/",
+            launchUrl = "https://new.example/", scope = "https://new.example/")
+        val entry = store.begin(OperationIntent(OperationType.UPDATE_URL, old.id,
+            oldGeneration = 4, newGeneration = 5,
+            resourceId = OriginChangeSnapshot.encode(snapshot)), 2)
+        repository.applyOriginSnapshot(snapshot, 4, 5)
+        repository.finishClearing(old.id, 4)
+        repository.update(repository.get(old.id)!!.copy(name = "Later edit"))
+        manager().startupMaintenance()
+        assertEquals(5L, repository.get(old.id)!!.profileGeneration)
+        assertEquals("Later edit", repository.get(old.id)!!.name)
+        assertEquals(ProfileState.ACTIVE, repository.get(old.id)!!.profileState)
+        assertTrue(store.completedOperations().none { it.id == entry.id })
+    }
+
+    @Test fun failedOriginJournalRetriesInProcessWithoutExtraGeneration() = runBlocking {
+        val old = newApp(generation = 4)
+        val profiles = started()
+        failPrune = true
+        val snapshot = old.copy(configuredUrl = "https://new.example/",
+            launchUrl = "https://new.example/", scope = "https://new.example/",
+            iconReference = "new-icon")
+        assertTrue(profiles.changeOrigin(snapshot) is ConfigurationWriteResult.PendingOriginChange)
+        assertEquals(ProfileState.CLEARING, repository.get(old.id)!!.profileState)
+        assertEquals(ConfigurationWriteResult.InvalidOrder, profiles.changeOrigin(snapshot))
+        assertTrue(profiles.clear(old.id) is ClearResult.Failed)
+        assertEquals(5L, repository.get(old.id)!!.profileGeneration)
+        failPrune = false
+        assertEquals(ClearResult.Cleared, profiles.clear(old.id))
+        assertEquals(snapshot.configuredUrl, repository.get(old.id)!!.configuredUrl)
+        assertEquals(5L, repository.get(old.id)!!.profileGeneration)
+        assertTrue(store.pendingOperations().none { it.intent.appId == old.id })
+        assertEquals(listOf(old.id to "new-icon"), prunedIcons)
+    }
+
+    @Test fun clearAdoptsPendingIntentBeforeReservingAnyGeneration() = runBlocking {
+        val old = newApp(generation = 4)
+        val profiles = started()
+        val snapshot = old.copy(configuredUrl = "https://new.example/",
+            launchUrl = "https://new.example/", scope = "https://new.example/")
+        store.begin(OperationIntent(OperationType.UPDATE_URL, old.id, 4, 5,
+            OriginChangeSnapshot.encode(snapshot)), 2)
+        assertEquals(ClearResult.Cleared, profiles.clear(old.id))
+        assertEquals(snapshot.configuredUrl, repository.get(old.id)!!.configuredUrl)
+        assertEquals(5L, repository.get(old.id)!!.profileGeneration)
+        assertTrue(store.pendingOperations().isEmpty())
+    }
+
+    @Test fun missingOriginSaveDoesNotRecordIntent() = runBlocking {
+        val old = newApp()
+        repository.remove(old.id)
+        assertEquals(ConfigurationWriteResult.MissingApp, manager().changeOrigin(old))
+        assertTrue(store.pendingOperations().isEmpty())
+    }
+
+    @Test fun originSnapshotRoundTripsNullableMetadataAndConsent() {
+        val base = ConfiguredApp("app", "Name", NameSource.USER_EDITED,
+            "https://new.example/?token=secret", null, "https://new.example/?token=secret",
+            "https://new.example/", createdAt = 1, updatedAt = 2)
+        assertEquals(base, OriginChangeSnapshot.decode(OriginChangeSnapshot.encode(base)))
+        val complete = base.copy(finalUrl = "https://new.example/final", themeColor = 12,
+            backgroundColor = 34, manifestSnapshot = "{}", iconReference = "app/icon",
+            allowThirdPartyCookies = true, sensitiveUrlConsent =
+                SensitiveUrlConsent.parse(null).grant(base.configuredUrl).serialize())
+        assertEquals(complete, OriginChangeSnapshot.decode(OriginChangeSnapshot.encode(complete)))
+    }
+
+    @Test fun originSaveClosesShellAndCommitsEvenWithIncompatibleProvider() = runBlocking {
+        val old = newApp()
+        val profiles = started()
+        compatible = false
+        val snapshot = old.copy(configuredUrl = "https://new.example/",
+            launchUrl = "https://new.example/", scope = "https://new.example/")
+        assertEquals(ConfigurationWriteResult.Success, profiles.changeOrigin(snapshot))
+        assertEquals(snapshot.configuredUrl, repository.get(old.id)!!.configuredUrl)
+        assertEquals(ProfileState.CLEARING, repository.get(old.id)!!.profileState)
+        assertTrue(old.id in closedShells)
+        assertTrue(backend.deleteCalls.isEmpty())
     }
 
     @Test fun missingSentinelNormalizesRestoreWithoutDeletingProfiles() = runBlocking {

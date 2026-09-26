@@ -90,7 +90,8 @@
     <string name="editor_https_required">HTTPS required. Insecure (HTTP) addresses cannot be saved.</string>
     <string name="editor_url_too_long">This address is too long.</string>
     <string name="editor_url_invalid">This is not a valid web address.</string>
-    <string name="editor_origin_change_unavailable">Changing an app to a different site is not supported yet. Add a new app for that site instead.</string>
+    <string name="editor_origin_change_pending">The new address is pending. Tap Retry to complete the save and remove the old site data, or restart the app.</string>
+    <string name="editor_origin_change_confirmation">Changing sites will sign you out and remove this app’s site data. Save the new address?</string>
     <string name="editor_origin_change_clearing">A different site cannot be set while site data is being cleared. You can still change the path of the address.</string>
     <string name="editor_clearing_notice">Site data is being cleared. You can change the name, the third-party cookie setting and the address within the same site. Clearing again and changing to a different site are unavailable until clearing finishes.</string>
     <string name="editor_sensitive_declined">Not saved. The address contains parameters that may hold credentials and was not confirmed.</string>

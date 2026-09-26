@@ -60,6 +60,7 @@ class EditorActivity : AppCompatActivity() {
     private var saved: ConfiguredApp? = null
     private var loaded = false
     private var saving = false
+    private var pendingOriginChange = false
     private var nameSource = NameSource.DISCOVERED
     /** The host last copied into Name; it keeps following the URL until the user edits Name. */
     private var hostName: String? = null
@@ -458,6 +459,8 @@ class EditorActivity : AppCompatActivity() {
                 populate(null)
                 return@launch
             }
+            pendingOriginChange = ShellServices.shared(this@EditorActivity).profiles.hasPendingOriginChange(id)
+            if (pendingOriginChange) maintenanceStatus.setText(R.string.editor_origin_change_pending)
             repository.observe(id).collect { app ->
                 if (app == null) {
                     if (!saving && !removing) {
@@ -481,13 +484,16 @@ class EditorActivity : AppCompatActivity() {
             saved?.profileState == ProfileState.ACTIVE
         removeButton.isEnabled = loaded && !saving && !removing
         val failed = maintenanceState.clearResult.let { it is ClearResult.Failed || it == ClearResult.Incompatible }
-        retryButton.visibility = if (saved?.profileState == ProfileState.CLEARING || failed)
+        retryButton.visibility = if (pendingOriginChange || saved?.profileState == ProfileState.CLEARING || failed)
             View.VISIBLE else View.GONE
         retryButton.isEnabled = !saving && !maintaining && !removing
-        saveButton.isEnabled = loaded && !saving && !maintaining && !removing
+        saveButton.isEnabled = loaded && !saving && !maintaining && !removing &&
+            (!pendingOriginChange || saved?.profileState == ProfileState.CLEARING)
     }
 
     private fun renderMaintenance(state: EditorMaintenanceState) {
+        if (state.clearResult == ClearResult.Cleared || state.clearResult == ClearResult.PendingRestart)
+            pendingOriginChange = false
         updateMaintenanceButtons()
         val message = when {
             state.removalFailed -> R.string.editor_remove_failed
@@ -586,7 +592,7 @@ class EditorActivity : AppCompatActivity() {
         is UrlPolicy.UserInput.Valid -> when {
             !EditorDraft.changesOrigin(saved, result.url) -> null
             saved?.profileState == ProfileState.CLEARING -> getString(R.string.editor_origin_change_clearing)
-            else -> getString(R.string.editor_origin_change_unavailable)
+            else -> null
         }
     }
 
@@ -624,7 +630,8 @@ class EditorActivity : AppCompatActivity() {
     }
 
     private fun save() {
-        if (saving || maintaining || removing || !loaded) return
+        if (saving || maintaining || removing || !loaded ||
+            (pendingOriginChange && saved?.profileState != ProfileState.CLEARING)) return
         val urlValid = showUrlError()
         val nameValid = showNameError()
         if (!urlValid || !nameValid) {
@@ -638,7 +645,9 @@ class EditorActivity : AppCompatActivity() {
         cancelDiscovery()
         discoveryStatus.setText(R.string.editor_discovery_stopped)
         val base = draft.record(saved, saved?.id ?: UUID.randomUUID().toString(), now)
-        val record = stages?.apply(base) ?: base
+        val exactStages = stages?.takeIf { it.configuredUrl == base.configuredUrl }
+        val record = exactStages?.apply(base) ?: base
+        val discoveredIcon = exactStages?.icon
         saving = true
         updateMaintenanceButtons()
         confirmSensitive(record, EditorConsent.pending(record)) { consented ->
@@ -647,7 +656,22 @@ class EditorActivity : AppCompatActivity() {
                 updateMaintenanceButtons()
                 urlLayout.error = getString(R.string.editor_sensitive_declined)
                 urlField.requestFocus()
-            } else persist(EditorConsent.prune(consented))
+            } else {
+                val ready = EditorConsent.prune(consented)
+                if (EditorDraft.changesOrigin(saved, url)) {
+                    var accepted = false
+                    AlertDialog.Builder(this)
+                        .setMessage(R.string.editor_origin_change_confirmation)
+                        .setPositiveButton(R.string.editor_save) { _, _ ->
+                            accepted = true
+                            persist(ready, discoveredIcon)
+                        }
+                        .setNegativeButton(R.string.editor_cancel, null)
+                        .setOnDismissListener {
+                            if (!accepted) { saving = false; updateMaintenanceButtons() }
+                        }.show()
+                } else persist(ready, discoveredIcon)
+            }
         }
     }
 
@@ -662,17 +686,19 @@ class EditorActivity : AppCompatActivity() {
         }
     }
 
-    private fun persist(record: ConfiguredApp) {
+    private fun persist(record: ConfiguredApp, icon: SelectedIcon?) {
         val adding = saved == null
         lifecycleScope.launch {
             // Once Save starts, the write completes even if the activity is destroyed.
             val result = withContext(NonCancellable) {
-                val icon = stages?.icon
                 val stored = if (icon == null) record else withContext(Dispatchers.IO) {
                     record.copy(iconReference = runCatching { IconStore(this@EditorActivity)
                         .save(record.id, icon) }.getOrNull() ?: record.iconReference)
                 }
-                if (adding) repository.add(stored) else repository.update(stored)
+                if (adding) repository.add(stored)
+                else if (EditorDraft.changesOrigin(saved, UrlPolicy.parseHttps(stored.configuredUrl)!!))
+                    ShellServices.shared(this@EditorActivity).profiles.changeOrigin(stored)
+                else repository.update(stored)
             }
             if (isDestroyed) return@launch
             when (result) {
@@ -680,6 +706,12 @@ class EditorActivity : AppCompatActivity() {
                 ConfigurationWriteResult.MissingApp -> {
                     Toast.makeText(this@EditorActivity, R.string.app_unavailable, Toast.LENGTH_LONG).show()
                     finish()
+                }
+                is ConfigurationWriteResult.PendingOriginChange -> {
+                    pendingOriginChange = true
+                    saving = false
+                    maintenanceStatus.setText(R.string.editor_origin_change_pending)
+                    updateMaintenanceButtons()
                 }
                 else -> {
                     saving = false

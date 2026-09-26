@@ -7,6 +7,24 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AppEditorTest {
+    @Test fun originChangeDropsOldIconButSameOriginKeepsIt() {
+        val old = ConfiguredApp("app", "Old", NameSource.USER_EDITED,
+            "https://example.com/", "https://example.com/final", "https://example.com/start",
+            "https://example.com/", iconReference = "old-icon", manifestSnapshot = "old",
+            themeColor = 42, createdAt = 1, updatedAt = 1)
+        fun draft(url: String) = EditorDraft("New", NameSource.USER_EDITED,
+            UrlPolicy.parseHttps(url)!!, false).record(old, old.id, 2)
+        val same = draft("https://example.com/path?q=1#fragment")
+        assertEquals("old-icon", same.iconReference)
+        assertEquals(old.profileGeneration, same.profileGeneration)
+        val changed = draft("https://other.example/path")
+        assertNull(changed.iconReference)
+        assertNull(changed.finalUrl)
+        assertNull(changed.manifestSnapshot)
+        assertNull(changed.themeColor)
+        assertEquals(changed.configuredUrl, changed.launchUrl)
+    }
+
     @Test fun urlInputReportsWhyItIsRejected() {
         assertEquals("https://example.com/",
             (UrlPolicy.validateUserInput(" example.com ") as UrlPolicy.UserInput.Valid).url.serialized)

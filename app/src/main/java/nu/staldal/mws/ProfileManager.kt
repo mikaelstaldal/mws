@@ -118,6 +118,7 @@ class LiveShellRegistry : LiveShellCloser {
 interface AppNativeData {
     fun deleteIcons(appId: String)
     fun widgetsChanged()
+    fun pruneIcons(appId: String, retainedReference: String?) {}
     fun reconcileIcons(apps: List<ConfiguredApp>, pending: List<JournalEntry>) {}
 }
 
@@ -197,6 +198,16 @@ class ProfileManager(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val journal = OperationJournal(maintenance, extraPlans + mapOf(
+        OperationType.UPDATE_URL to listOf({ intent ->
+            val snapshot = OriginChangeSnapshot.decode(requireNotNull(intent.resourceId))
+            val result = runBlocking { repository.applyOriginSnapshot(snapshot,
+                requireNotNull(intent.oldGeneration), requireNotNull(intent.newGeneration)) }
+            if (result is ConfigurationWriteResult.StorageFailure) throw result.cause
+        }, { intent ->
+            val app = runBlocking { repository.get(requireNotNull(intent.appId)) }
+            nativeData.pruneIcons(requireNotNull(intent.appId), app?.iconReference)
+            nativeData.widgetsChanged()
+        }),
         OperationType.RESTORE to listOf({ intent ->
             val result = runBlocking { repository.normalizeRestored(requireNotNull(intent.appId),
                 requireNotNull(intent.newGeneration)) }
@@ -328,7 +339,9 @@ class ProfileManager(
                 "Restore normalization incomplete"
             }
             if (!maintenance.hasInstallationSentinel()) maintenance.createInstallationSentinel()
-            maintenance.completedOperations().filter { it.intent.type == OperationType.RESTORE }
+            maintenance.completedOperations().filter {
+                it.intent.type == OperationType.RESTORE || it.intent.type == OperationType.UPDATE_URL
+            }
                 .forEach { maintenance.discardCompleted(it.id) }
         }
         try {
@@ -426,10 +439,29 @@ class ProfileManager(
         if (live[bound.profileName]?.remove(bound.webView) == true) bound.webView.destroy()
     }
 
+    suspend fun hasPendingOriginChange(appId: String): Boolean = withContext(io) {
+        maintenance.pendingOperations().any {
+            it.intent.appId == appId && it.intent.type == OperationType.UPDATE_URL
+        }
+    }
+
     /** Clear and Retry share one path: an existing reservation is resumed, never renewed. */
     suspend fun clear(appId: String): ClearResult {
-        if (!compatibility.mayAccessProfile()) return ClearResult.Incompatible
         val app = lifecycle.withLock {
+            val pending = withContext(io) { maintenance.pendingOperations().filter { it.intent.appId == appId } }
+            if (pending.any { it.intent.type != OperationType.UPDATE_URL })
+                return ClearResult.Failed(IllegalStateException("App has pending maintenance"))
+            if (pending.isNotEmpty()) {
+                try {
+                    withContext(io) {
+                        pending.forEach { journal.run(it); maintenance.discardCompleted(it.id) }
+                    }
+                } catch (failure: Exception) { return ClearResult.Failed(failure) }
+                val resumed = repository.get(appId) ?: return ClearResult.MissingApp
+                if (resumed.profileState == ProfileState.ACTIVE) return ClearResult.Cleared
+                return@withLock resumed
+            }
+            if (!compatibility.mayAccessProfile()) return ClearResult.Incompatible
             when (val reservation = repository.reserveNextGeneration(appId)) {
                 is GenerationReservation.Reserved -> reservation.app
                 GenerationReservation.MissingApp -> null
@@ -437,6 +469,35 @@ class ProfileManager(
             }
         } ?: return ClearResult.MissingApp
         return finishRetiring(app)
+    }
+
+    /** Intent precedes the configuration commit; startup completes it forward. */
+    suspend fun changeOrigin(snapshot: ConfiguredApp): ConfigurationWriteResult {
+        val app = lifecycle.withLock {
+            val current = repository.get(snapshot.id) ?: return ConfigurationWriteResult.MissingApp
+            if (current.profileState != ProfileState.ACTIVE || withContext(io) {
+                    maintenance.pendingOperations().any { it.intent.appId == snapshot.id }
+                }) return ConfigurationWriteResult.InvalidOrder
+            var intentRecorded = false
+            try {
+                withContext(io) {
+                    val entry = journal.start(OperationIntent(OperationType.UPDATE_URL, snapshot.id,
+                        oldGeneration = current.profileGeneration,
+                        newGeneration = Math.addExact(current.profileGeneration, 1),
+                        resourceId = OriginChangeSnapshot.encode(snapshot)))
+                    intentRecorded = true
+                    journal.run(entry)
+                    maintenance.discardCompleted(entry.id)
+                }
+            } catch (failure: Exception) {
+                return if (intentRecorded) ConfigurationWriteResult.PendingOriginChange(failure)
+                    else ConfigurationWriteResult.StorageFailure(failure)
+            }
+            requireNotNull(repository.get(snapshot.id))
+        }
+        // The new configuration is durable even when provider cleanup must wait for Retry.
+        finishRetiring(app)
+        return ConfigurationWriteResult.Success
     }
 
     private suspend fun finishRetiring(app: ConfiguredApp): ClearResult {

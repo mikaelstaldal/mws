@@ -1069,6 +1069,28 @@ class ShellActivityTest {
         assertFalse(activity.isFinishing)
     }
 
+    @Test fun originReplacementClosesOldShellAndMyPassUsesOnlyNewUrl() {
+        installMyPass()
+        val app = addApp()
+        val oldActivity = launch(ShellActivity.intent(context, app.id))
+        val oldView = awaitWebView(oldActivity)
+        val snapshot = app.copy(configuredUrl = "https://new.example/private",
+            launchUrl = "https://new.example/private", scope = "https://new.example/")
+        assertEquals(ConfigurationWriteResult.Success,
+            onMain { services.profiles.changeOrigin(snapshot) })
+        assertTrue(oldActivity.isFinishing)
+        assertTrue(Shadows.shadowOf(oldView).wasDestroyCalled())
+        val fresh = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(fresh)
+        assertEquals(snapshot.launchUrl, Shadows.shadowOf(view).lastLoadedUrl)
+        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view,
+            request(snapshot.launchUrl, "GET"))
+        basicAuth(fresh).challenge(Answer(), "new.example", "New site")
+        val lookup = Shadows.shadowOf(fresh).nextStartedActivityForResult
+        assertEquals(snapshot.launchUrl, lookup.intent.getStringExtra(MyPassClient.EXTRA_URL))
+        assertEquals(ProfileNames.app(app.id, 1), backend.bound.last())
+    }
+
     @Test fun basicChallengeLooksUpExactUrlAndRealmPausesTimerAndSuppliesOnce() {
         installMyPass()
         val app = addApp()

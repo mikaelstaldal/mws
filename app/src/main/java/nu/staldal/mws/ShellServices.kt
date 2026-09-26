@@ -93,6 +93,8 @@ class ShellServices(
             val profiles = ProfileManager(repository, maintenance, compatibility,
                 AndroidWebProfileBackend(), shells, object : AppNativeData {
                     override fun deleteIcons(appId: String) = icons.delete(appId)
+                    override fun pruneIcons(appId: String, retainedReference: String?) =
+                        icons.prune(appId, retainedReference)
                     override fun reconcileIcons(apps: List<ConfiguredApp>, pending: List<JournalEntry>) {
                         icons.reconcile(apps.mapNotNull { it.iconReference }.toSet() +
                             pending.mapNotNull { it.intent.resourceId },

@@ -15,6 +15,7 @@ sealed interface ConfigurationWriteResult {
     data object Success : ConfigurationWriteResult
     data object MissingApp : ConfigurationWriteResult
     data object InvalidOrder : ConfigurationWriteResult
+    data class PendingOriginChange(val cause: Throwable) : ConfigurationWriteResult
     data object DuplicateApp : ConfigurationWriteResult
     data class StorageFailure(val cause: Throwable) : ConfigurationWriteResult
 }
@@ -85,6 +86,21 @@ class ConfigurationRepository(private val database: ConfigurationDatabase) {
         } catch (failure: Exception) {
             storageFailure(failure)?.let { GenerationReservation.StorageFailure(it) } ?: throw failure
         }
+
+    /** Fixed journal generations make replay safe even after cleanup has already finished. */
+    suspend fun applyOriginSnapshot(snapshot: ConfiguredApp, oldGeneration: Long,
+        newGeneration: Long): ConfigurationWriteResult = write {
+        database.withTransaction {
+            val current = dao.get(snapshot.id) ?: return@withTransaction ConfigurationWriteResult.MissingApp
+            if (current.profileGeneration == newGeneration) return@withTransaction ConfigurationWriteResult.Success
+            check(current.profileGeneration == oldGeneration && current.profileState == ProfileState.ACTIVE)
+            check(newGeneration == Math.addExact(oldGeneration, 1))
+            dao.update(snapshot.copy(sortPosition = current.sortPosition, createdAt = current.createdAt,
+                profileState = ProfileState.CLEARING, profileGeneration = newGeneration,
+                retiringProfileGeneration = oldGeneration))
+            ConfigurationWriteResult.Success
+        }
+    }
 
     /** Clear step 4: only the recorded retiring generation can be finished, and only once. */
     suspend fun finishClearing(id: String, retiringGeneration: Long): ConfigurationWriteResult = write {
