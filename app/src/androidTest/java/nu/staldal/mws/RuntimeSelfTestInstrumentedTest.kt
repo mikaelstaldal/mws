@@ -19,6 +19,12 @@ class RuntimeSelfTestInstrumentedTest {
         assertTrue("FormFillProbe", FormFillProbe(context, ShellServices.shared(context).profiles).run())
     }
 
+    @Test fun basicAuthProbePassesWithoutNetwork() = runBlocking {
+        assumeTrue("MULTI_PROFILE", WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertTrue("BasicAuthProbe", BasicAuthProbe(context, ShellServices.shared(context).profiles).run())
+    }
+
     @Test fun isolationAndDeletionProbesPassWithoutNetwork() = runBlocking {
         assumeTrue("MULTI_PROFILE", WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
         val context = InstrumentationRegistry.getInstrumentation().targetContext

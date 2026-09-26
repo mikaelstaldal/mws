@@ -47,6 +47,8 @@
     <string name="shell_no_handler">No app is installed that can open this link.</string>
     <string name="shell_no_browser">No browser is available to open this link.</string>
     <string name="shell_download_unsupported">Downloads are not supported.</string>
+    <string name="shell_auth_unavailable">Authentication unavailable. MyPass did not provide a password for this page.</string>
+    <string name="shell_auth_rejected">Sign-in failed. The site did not accept the password from MyPass.</string>
     <string name="open_in_browser">Open in browser</string>
     <string name="external_open">Open</string>
     <string name="external_prompt_mailto">Open this email link in another app?</string>

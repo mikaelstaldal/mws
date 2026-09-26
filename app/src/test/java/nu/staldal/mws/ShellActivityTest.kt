@@ -46,6 +46,7 @@ class ShellActivityTest {
     private lateinit var services: ShellServices
     private val backend = Backend()
     private var compatible = true
+    private var basicAuthProbe = true
     private val controllers = mutableListOf<ActivityController<*>>()
 
     @Before fun setUp() {
@@ -55,7 +56,7 @@ class ShellActivityTest {
         store.createInstallationSentinel()
         val compatibility = ProviderCompatibility(
             { ProviderSnapshot(PROVIDER, compatible) },
-            { key -> ProviderSelfTestResult(key, true, true, true, true, true, true) },
+            { key -> ProviderSelfTestResult(key, true, true, basicAuthProbe, true, true, true) },
             floors = mapOf(PROVIDER.packageName to listOf(1)),
         )
         val shells = LiveShellRegistry()
@@ -1066,6 +1067,244 @@ class ShellActivityTest {
         assertNull(Shadows.shadowOf(activity).nextStartedActivity)
         assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
         assertFalse(activity.isFinishing)
+    }
+
+    @Test fun basicChallengeLooksUpExactUrlAndRealmPausesTimerAndSuppliesOnce() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        // The main document's own request does not disarm the gate.
+        assertNull(client.shouldInterceptRequest(view, request(app.launchUrl, "GET")))
+        val answer = Answer()
+        basicAuth(activity).challenge(answer, "example.com", "Private area")
+        val request = Shadows.shadowOf(activity).nextStartedActivityForResult
+        assertEquals(MyPassClient.ACTION, request.intent.action)
+        assertEquals(MyPassClient.PACKAGE, request.intent.`package`)
+        assertEquals(app.launchUrl, request.intent.getStringExtra(MyPassClient.EXTRA_URL))
+        assertEquals("Private area", request.intent.getStringExtra(MyPassClient.EXTRA_REALM))
+        // The initial-load timer is paused while MyPass is outstanding.
+        ShadowLooper.idleMainLooper(45, TimeUnit.SECONDS)
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        Shadows.shadowOf(activity).receiveResult(request.intent, android.app.Activity.RESULT_OK, credential())
+        ShadowLooper.idleMainLooper()
+        assertEquals(listOf("proceed:user:secret"), answer.calls)
+
+        // A repeated challenge for the same navigation, URL and realm is a rejection.
+        val repeat = Answer()
+        basicAuth(activity).challenge(repeat, "example.com", "Private area")
+        assertEquals(listOf("cancel"), repeat.calls)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+        assertEquals(context.getString(R.string.shell_auth_rejected), errorText(activity))
+    }
+
+    @Test fun missingMyPassCancelsChallengeAndShowsAuthenticationUnavailable() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
+        val answer = Answer()
+        basicAuth(activity).challenge(answer, "example.com", "Private")
+        assertEquals(listOf("cancel"), answer.calls)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+        assertEquals(context.getString(R.string.shell_auth_unavailable), errorText(activity))
+    }
+
+    @Test fun cancelledMyPassLookupCancelsChallengeWithNonSensitiveError() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        assertFalse(Shadows.shadowOf(view).webViewClient.shouldOverrideUrlLoading(view,
+            request("https://example.com/private", "GET")))
+        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view, request("https://example.com/private", "GET"))
+        val answer = Answer()
+        basicAuth(activity).challenge(answer, "example.com", "Private")
+        val request = Shadows.shadowOf(activity).nextStartedActivityForResult
+        assertEquals("https://example.com/private", request.intent.getStringExtra(MyPassClient.EXTRA_URL))
+        Shadows.shadowOf(activity).receiveResult(request.intent, android.app.Activity.RESULT_CANCELED, null)
+        ShadowLooper.idleMainLooper()
+        assertEquals(listOf("cancel"), answer.calls)
+        assertEquals(context.getString(R.string.shell_auth_unavailable), ShadowToast.getTextOfLatestToast())
+    }
+
+    @Test fun belowFloorOrFailedProbeCancelsEveryChallengeWithoutMyPass() {
+        installMyPass()
+        basicAuthProbe = false
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        awaitWebView(activity)
+        val answer = Answer()
+        basicAuth(activity).challenge(answer, "example.com", "Private")
+        assertEquals(listOf("cancel"), answer.calls)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+    }
+
+    @Test fun iframeSubresourceAndLateChallengesAreCancelled() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        val auth = basicAuth(activity)
+        // An iframe or early subresource request disarms before any challenge is answered.
+        client.shouldInterceptRequest(view, request("https://example.com/frame", "GET", mainFrame = false))
+        ShadowLooper.idleMainLooper()
+        Answer().also { auth.challenge(it, "example.com", "Private"); assertEquals(listOf("cancel"), it.calls) }
+        // A late challenge after commit.
+        client.onPageCommitVisible(view, app.launchUrl)
+        Answer().also { auth.challenge(it, "example.com", "Private"); assertEquals(listOf("cancel"), it.calls) }
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+    }
+
+    @Test fun sameOriginRedirectIsLookedUpButCrossOriginRedirectCannotInherit() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        val auth = basicAuth(activity)
+        client.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
+        assertFalse(client.shouldOverrideUrlLoading(view,
+            request("https://example.com/login", "GET", redirect = true, gesture = false)))
+        auth.challenge(Answer(), "example.com", "Private")
+        assertEquals("https://example.com/login", Shadows.shadowOf(activity).nextStartedActivityForResult
+            .intent.getStringExtra(MyPassClient.EXTRA_URL))
+
+        client.onPageCommitVisible(view, "https://example.com/login")
+        assertFalse(client.shouldOverrideUrlLoading(view, request("https://example.com/account", "GET")))
+        assertFalse(client.shouldOverrideUrlLoading(view,
+            request("https://auth.other.example/login", "GET", redirect = true, gesture = false)))
+        for (host in listOf("auth.other.example", "example.com")) {
+            Answer().also { auth.challenge(it, host, "Private"); assertEquals(listOf("cancel"), it.calls) }
+        }
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+    }
+
+    @Test fun noCredentialIsSuppliedToTlsErrorOrCleartextNavigation() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onReceivedSslError(view, ReflectionHelpers.callConstructor(SslErrorHandler::class.java),
+            SslError(SslError.SSL_UNTRUSTED, ReflectionHelpers.newInstance(SslCertificate::class.java), app.launchUrl))
+        Answer().also { basicAuth(activity).challenge(it, "example.com", "Private"); assertEquals(listOf("cancel"), it.calls) }
+
+        val second = launch(ShellActivity.intent(context, addApp().id))
+        val secondView = awaitWebView(second)
+        val secondClient = Shadows.shadowOf(secondView).webViewClient
+        secondClient.onPageCommitVisible(secondView, "https://example.com/start")
+        assertTrue(secondClient.shouldOverrideUrlLoading(secondView, request("http://example.com/", "GET")))
+        Answer().also { basicAuth(second).challenge(it, "example.com", "Private"); assertEquals(listOf("cancel"), it.calls) }
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+        assertNull(Shadows.shadowOf(second).nextStartedActivityForResult)
+    }
+
+    @Test fun newNavigationCancelsOutstandingChallengeAndIgnoresLateCredential() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
+        val answer = Answer()
+        basicAuth(activity).challenge(answer, "example.com", "Private")
+        val request = Shadows.shadowOf(activity).nextStartedActivityForResult
+        assertFalse(client.shouldOverrideUrlLoading(view, request("https://example.com/other", "GET")))
+        assertEquals(listOf("cancel"), answer.calls)
+        Shadows.shadowOf(activity).receiveResult(request.intent, android.app.Activity.RESULT_OK, credential())
+        ShadowLooper.idleMainLooper()
+        assertEquals(listOf("cancel"), answer.calls)
+    }
+
+    @Test fun challengeFromARequestInFlightBeforeTheNavigationIsCancelled() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        // A fetch from the committed page is still in flight when a link arms the gate.
+        assertFalse(client.shouldOverrideUrlLoading(view, request("https://example.com/next", "GET")))
+        Answer().also { basicAuth(activity).challenge(it, "example.com", "Private"); assertEquals(listOf("cancel"), it.calls) }
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+    }
+
+    @Test fun lookupResumesTheInitialTimerAfterwards() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
+        ShadowLooper.idleMainLooper(20, TimeUnit.SECONDS)
+        val answer = Answer()
+        basicAuth(activity).challenge(answer, "example.com", "Private")
+        val request = Shadows.shadowOf(activity).nextStartedActivityForResult
+        ShadowLooper.idleMainLooper(50, TimeUnit.SECONDS)
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        Shadows.shadowOf(activity).receiveResult(request.intent, android.app.Activity.RESULT_OK, credential())
+        ShadowLooper.idleMainLooper(5, TimeUnit.SECONDS)
+        assertEquals(listOf("proceed:user:secret"), answer.calls)
+        assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+        ShadowLooper.idleMainLooper(6, TimeUnit.SECONDS)
+        assertEquals(context.getString(R.string.shell_timeout), errorText(activity))
+    }
+
+    @Test fun activityRecreationCancelsOutstandingLookupWithErrorButKeepsTheNavigationArmed() {
+        installMyPass()
+        val app = addApp()
+        val controller = controller(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(controller.get())
+        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
+        val answer = Answer()
+        basicAuth(controller.get()).challenge(answer, "example.com", "Private")
+        assertNotNull(Shadows.shadowOf(controller.get()).nextStartedActivityForResult)
+        controller.recreate()
+        assertEquals(listOf("cancel"), answer.calls)
+        val recreated = controller.get()
+        assertEquals(context.getString(R.string.shell_auth_unavailable), errorText(recreated))
+
+        val second = launch(ShellActivity.intent(context, addApp().id))
+        val secondView = awaitWebView(second)
+        Shadows.shadowOf(secondView).webViewClient.shouldInterceptRequest(secondView, request(app.launchUrl, "GET"))
+        // A navigation armed across a configuration change still gets its lookup.
+        val holderController = controllers.last()
+        holderController.recreate()
+        val again = holderController.get() as ShellActivity
+        basicAuth(again).challenge(Answer(), "example.com", "Private")
+        assertNotNull(Shadows.shadowOf(again).nextStartedActivityForResult)
+    }
+
+    private class Answer : AuthAnswer {
+        val calls = mutableListOf<String>()
+        override fun proceed(username: String, password: String) { calls += "proceed:$username:$password" }
+        override fun cancel() { calls += "cancel" }
+    }
+
+    private fun basicAuth(activity: ShellActivity): ShellBasicAuth =
+        ReflectionHelpers.getField(ReflectionHelpers.getField<ShellHolder>(activity, "holder"), "basicAuth")
+
+    private fun errorText(activity: ShellActivity): CharSequence? =
+        container(activity).getChildAt(container(activity).childCount - 1).contentDescription
+
+    private fun credential() = Intent()
+        .putExtra(MyPassClient.EXTRA_RESULT_USERNAME, "user")
+        .putExtra(MyPassClient.EXTRA_RESULT_PASSWORD, "secret")
+
+    private fun installMyPass() {
+        Shadows.shadowOf(context as android.app.Application).grantPermissions(MyPassClient.PERMISSION)
+        val info = android.content.pm.ResolveInfo().apply {
+            activityInfo = android.content.pm.ActivityInfo().apply {
+                packageName = MyPassClient.PACKAGE
+                name = "${MyPassClient.PACKAGE}.FetchActivity"
+            }
+        }
+        Shadows.shadowOf(context.packageManager).addResolveInfoForIntent(
+            MyPassClient.requestIntent("https://example.invalid/"), info)
     }
 
     private fun installBrowser(packageName: String) {

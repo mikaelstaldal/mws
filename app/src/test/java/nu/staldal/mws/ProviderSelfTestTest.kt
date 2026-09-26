@@ -39,6 +39,27 @@ class ProviderSelfTestTest {
         }
     }
 
+    @Test fun failedBasicAuthProbeDisablesOnlyBasicAuth() = runBlocking {
+        val key = ProviderKey("provider", "1.2", 35, "arm64")
+        MaintenanceStore(context).use { store ->
+            val probes = listOf("isolation", "deletion", "basicAuth", "formFill").map { feature ->
+                object : ProviderProbe {
+                    override val name = feature
+                    override suspend fun run() = feature != "basicAuth"
+                }
+            }
+            ProviderSelfTestRunner({ ProviderSnapshot(key, true) }, store, probes).runIfNeeded()
+            val result = SelfTestEncoding.decode(key, store.selfTest())!!
+            val features = ProviderCompatibility({ ProviderSnapshot(key, true) }, { result },
+                floors = mapOf("provider" to listOf(1))).current().features
+            assertFalse(features.basicAuth)
+            assertTrue(features.formFill)
+            // Below the floor every feature, including Basic auth, is off.
+            assertFalse(ProviderCompatibility({ ProviderSnapshot(key, true) }, { result.copy(basicAuth = true) },
+                floors = mapOf("provider" to listOf(2))).current().features.basicAuth)
+        }
+    }
+
     @Test fun firstStartAndKeyChangeRunOnceAndLeaveOptionalFeaturesDisabled() = runBlocking {
         val key = ProviderKey("provider", "1.2", 35, "arm64")
         var snapshot = ProviderSnapshot(key, true)

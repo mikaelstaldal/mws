@@ -16,9 +16,11 @@ import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.GeolocationPermissions
+import android.webkit.HttpAuthHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceError
+import android.webkit.WebResourceResponse
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.net.http.SslError
@@ -291,6 +293,18 @@ class ShellHolder(
     private val knownSafeGets = mutableSetOf<String>()
     private var formFill: FormFillEngine? = null
     private var formClient: MyPassClient? = null
+    private val basicAuth = ShellBasicAuth(
+        enabled = { services.compatibility.current().features.basicAuth && closed == null },
+        client = { (host as? ShellActivity)?.myPass },
+        flow = appId,
+        onLookup = {
+            // A Basic challenge takes precedence over form fill (R§11.1).
+            formFill?.invalidate()
+            pauseInitialTimer()
+        },
+        onLookupEnded = ::resumeInitialTimer,
+        onError = ::notice,
+    )
     private var rendererGone = false
     var recovering = false
         private set
@@ -330,6 +344,8 @@ class ShellHolder(
         bound?.webView?.webChromeClient = ShellChromeClient()
         bound?.webView?.setOnCreateContextMenuListener(null)
         formFill?.rejectDocument()
+        // The activity's MyPass client closes with it; its lookup cannot complete.
+        basicAuth.detach()
         this.host = null
         bound?.webView?.let { (it.parent as? ViewGroup)?.removeView(it) }
         context.baseContext = application
@@ -451,6 +467,7 @@ class ShellHolder(
     }
 
     private fun release() {
+        basicAuth.close()
         val attached = bound ?: return
         (host as? ShellActivity)?.webPermissions?.close()
         formFill?.close()
@@ -517,6 +534,7 @@ class ShellHolder(
         host?.onPresentationChanged()
         if (initial) startTimer(navigationIdentity)
         formFill?.navigate(url)
+        basicAuth.arm(url)
         webView.loadUrl(url)
     }
 
@@ -532,8 +550,9 @@ class ShellHolder(
                     NavigationDecision.Stay -> {}
                 }
             },
-            onRequest = { url, get ->
+            onRequest = { url, get, redirect ->
                 if (bound?.webView === webView) {
+                    if (redirect) basicAuth.redirect(url) else basicAuth.arm(url)
                     (host as? ShellActivity)?.webPermissions?.close()
                     formFill?.navigate(url)
                     currentUrl = url
@@ -542,6 +561,7 @@ class ShellHolder(
                 }
             },
             onStarted = { url ->
+                if (bound?.webView === webView) basicAuth.disarm()
                 if (bound?.webView === webView && error == null) {
                     (host as? ShellActivity)?.webPermissions?.close()
                     formFill?.started(url)
@@ -552,6 +572,7 @@ class ShellHolder(
                 }
             },
             onCommit = { url ->
+                if (bound?.webView === webView) basicAuth.disarm()
                 if (bound?.webView === webView && error == null) {
                     hasVisiblePaint = true
                     webView.setBackgroundColor(Color.WHITE)
@@ -568,12 +589,23 @@ class ShellHolder(
                     host?.onPresentationChanged()
                 }
             },
-            onFailure = { message -> if (bound?.webView === webView) fail(message) },
+            onFailure = { message ->
+                if (bound?.webView === webView) {
+                    basicAuth.disarm()
+                    fail(message)
+                }
+            },
             onTlsFailure = { url ->
                 if (bound?.webView === webView) {
+                    basicAuth.disarm()
                     formFill?.rejectDocument()
                     if (url == currentUrl) fail(R.string.shell_tls_error)
                 }
+            },
+            onCancelled = { if (bound?.webView === webView) basicAuth.disarm() },
+            onIntercept = basicAuth::intercepted,
+            onAuthRequest = { answer, authHost, realm ->
+                if (bound?.webView === webView) basicAuth.challenge(answer, authHost, realm) else answer.cancel()
             },
             onRendererGone = { rendererFailed(webView) },
         )
@@ -593,6 +625,7 @@ class ShellHolder(
 
     private fun fail(message: Int) {
         if (closed != null || error != null) return
+        basicAuth.disarm()
         (host as? ShellActivity)?.webPermissions?.close()
         formFill?.rejectDocument()
         stopTimer()
@@ -608,7 +641,13 @@ class ShellHolder(
         error = null
         bound?.webView?.let { webView ->
             if (webView.url != null && webView.url != lastSafeGet) {
-                if (webView.canGoBack()) webView.goBack() else webView.loadUrl(lastSafeGet!!)
+                if (webView.canGoBack()) {
+                    basicAuth.disarm()
+                    webView.goBack()
+                } else {
+                    basicAuth.arm(lastSafeGet!!)
+                    webView.loadUrl(lastSafeGet!!)
+                }
             }
         }
         host?.onPresentationChanged()
@@ -681,6 +720,7 @@ class ShellHolder(
 
     private fun rendererFailed(webView: WebView): Boolean {
         if (bound?.webView !== webView || closed != null) return true
+        basicAuth.disarm()
         stopTimer()
         loading = false
         formFill?.close()
@@ -740,22 +780,39 @@ object ShellWebSettings {
  */
 private class ShellWebViewClient(
     private val onIntercepted: (NavigationDecision) -> Unit = {},
-    private val onRequest: (String, Boolean) -> Unit = { _, _ -> },
+    /** An allowed main-frame request: URL, whether it is a GET, and whether it is a redirect. */
+    private val onRequest: (String, Boolean, Boolean) -> Unit = { _, _, _ -> },
     private val onStarted: (String) -> Unit = {},
     private val onCommit: (String) -> Unit = {},
     private val onFailure: (Int) -> Unit = {},
     private val onTlsFailure: (String?) -> Unit = {},
+    /** A main-frame navigation was cancelled by policy. */
+    private val onCancelled: () -> Unit = {},
+    /** Called on a background thread for every request, including the main document. */
+    private val onIntercept: (String) -> Unit = {},
+    private val onAuthRequest: (AuthAnswer, String?, String?) -> Unit = { answer, _, _ -> answer.cancel() },
     private val onRendererGone: (WebView) -> Boolean = { true },
 ) : WebViewClient() {
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val url = request.url.toString()
         val decision = NavigationPolicy.decide(url, request.isForMainFrame, request.isRedirect, request.hasGesture())
         if (decision != NavigationDecision.Stay) {
+            if (request.isForMainFrame) onCancelled()
             onIntercepted(decision)
             return true
         }
-        if (request.isForMainFrame) onRequest(url, request.method == "GET")
+        if (request.isForMainFrame) onRequest(url, request.method == "GET", request.isRedirect)
         return false
+    }
+
+    override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+        onIntercept(request.url.toString())
+        return null
+    }
+
+    /** A§11: never answered from the provider HTTP-auth database; only the navigation gate may supply a credential. */
+    override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler, host: String?, realm: String?) {
+        onAuthRequest(handler.asAnswer(), host, realm)
     }
 
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
@@ -768,7 +825,7 @@ private class ShellWebViewClient(
 
     override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError?) {
         if (request.isForMainFrame) {
-            onRequest(request.url.toString(), request.method == "GET")
+            onRequest(request.url.toString(), request.method == "GET", false)
             onFailure(if (request.url.scheme.equals("http", ignoreCase = true)) R.string.shell_https_required
                 else R.string.shell_load_error)
         }

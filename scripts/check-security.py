@@ -23,8 +23,10 @@ patterns.update({
     "global web storage": re.compile(r"\bWebStorage\s*\.\s*getInstance\b"),
     "global geolocation permissions": re.compile(r"\bGeolocationPermissions\s*\.\s*getInstance\b"),
     "global service worker controller": re.compile(r"\bServiceWorkerController(?:Compat)?\s*\.\s*getInstance\b"),
-    "WebView database": re.compile(r"\bWebViewDatabase\b|\b[sg]etHttpAuthUsernamePassword\b"),
+    "WebView database": re.compile(r"\bWebViewDatabase\b|\b[sg]etHttpAuthUsernamePassword\b|\buseHttpAuthUsernamePassword\b"),
 })
+# A§11: only the Basic-auth navigation gate may answer an HTTP auth challenge with a credential.
+auth_owner = Path("app/src/main/java/nu/staldal/mws/BasicAuth.kt")
 layout_webview = re.compile(r"<(?:android\.webkit\.)?WebView\b")
 # Only the profile manager may construct WebViews, bind profiles or call ProfileStore.
 profile_owner = Path("app/src/main/java/nu/staldal/mws/ProfileManager.kt")
@@ -46,6 +48,8 @@ for path in source.rglob("*"):
         # Both navigation hosts may report TLS failure only after cancelling it.
         if path not in {shell_owner, discovery_owner} or "handler.cancel()" not in data or re.search(r"\bproceed\s*\(", data):
             violations.append(f"{path}: SSL error callback")
+    if "HttpAuthHandler" in data and path != auth_owner and re.search(r"\bproceed\s*\(", data):
+        violations.append(f"{path}: HTTP auth answered outside the navigation gate")
     for label, pattern in patterns.items():
         if pattern.search(data):
             violations.append(f"{path}: {label}")
