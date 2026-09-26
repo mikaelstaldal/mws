@@ -37,6 +37,7 @@ class ShellServices(
      * is retried by the next caller.
      */
     suspend fun awaitStartup(): StartupReport = startupLock.withLock {
+        profiles.prepareConfiguration()
         val currentKey = compatibility.current().key
         if (!selfTestAttempted || currentKey != selfTestKey) {
             selfTest?.invoke()
@@ -90,16 +91,25 @@ class ShellServices(
             val profiles = ProfileManager(repository, maintenance, compatibility,
                 AndroidWebProfileBackend(), shells, object : AppNativeData {
                     override fun deleteIcons(appId: String) = icons.delete(appId)
+                    override fun reconcileIcons(apps: List<ConfiguredApp>, pending: List<JournalEntry>) {
+                        icons.reconcile(apps.mapNotNull { it.iconReference }.toSet() +
+                            pending.mapNotNull { it.intent.resourceId },
+                            pending.mapNotNull { it.intent.appId }.toSet())
+                        kotlinx.coroutines.runBlocking {
+                            val result = repository.clearMissingIcons(icons::exists)
+                            if (result is ConfigurationWriteResult.StorageFailure) throw result.cause
+                        }
+                    }
                     override fun widgetsChanged() {
-                        try { refreshWidgets(context) }
-                        catch (failure: Exception) { Log.w("ShellServices", "Widget refresh failed", failure) }
+                        // Journals invoke this under the profile lifecycle lock; refresh later.
+                        MultiWidget.launch { refreshWidgets(context) }
                     }
                 })
             val runner = ProviderSelfTestRunner(source, maintenance, listOf(
                 IsolationProbe(context, profiles), DeletionProbe(context), FormFillProbe(context, profiles)))
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 repository.apps.collect {
-                    try { refreshWidgets(context) }
+                    try { profiles.prepareConfiguration(); refreshWidgets(context) }
                     catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) {
                         // A later configuration change or provider update retries the refresh.

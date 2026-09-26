@@ -56,7 +56,10 @@ object MultiWidget {
         val manager = AppWidgetManager.getInstance(context)
         val ids = installed(context)
         if (ids.isEmpty()) return
-        val apps = runBlocking { ConfigurationRepository(ConfigurationDatabase.shared(context)).ordered() }
+        val apps = runBlocking {
+            ShellServices.shared(context).profiles.prepareConfiguration()
+            ConfigurationRepository(ConfigurationDatabase.shared(context)).ordered()
+        }
         MaintenanceStore(context).use { store ->
             for (id in ids) {
                 val record = store.widget(id)
@@ -150,9 +153,11 @@ class MultiWidgetService : RemoteViewsService() {
         override fun onCreate() = onDataSetChanged()
         override fun onDataSetChanged() {
             if (widgetId !in MultiWidget.installed(context)) { apps = emptyList(); return }
-            val ordered = runBlocking {
+            val ordered = try { runBlocking {
+                ShellServices.shared(context).profiles.prepareConfiguration()
                 ConfigurationRepository(ConfigurationDatabase.shared(context)).ordered()
             }
+            } catch (_: Exception) { apps = emptyList(); return }
             MaintenanceStore(context).use { store -> apps = MultiWidget.select(ordered, store.widget(widgetId)) }
         }
         override fun onDestroy() { apps = emptyList() }
@@ -179,6 +184,9 @@ class MultiWidgetConfigureActivity : AppCompatActivity() {
             finish(); return
         }
         lifecycleScope.launch {
+            try { ShellServices.shared(this@MultiWidgetConfigureActivity).profiles.prepareConfiguration() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { finish(); return@launch }
             val apps = withContext(Dispatchers.IO) {
                 ConfigurationRepository(ConfigurationDatabase.shared(this@MultiWidgetConfigureActivity)).ordered()
             }

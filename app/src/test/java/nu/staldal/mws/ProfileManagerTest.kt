@@ -27,12 +27,16 @@ class ProfileManagerTest {
     private val closedShells = mutableListOf<String>()
     private val deletedIcons = mutableListOf<String>()
     private var widgetUpdates = 0
+    private var failIconReconciliation = false
+    private var iconReconciliations = 0
+    private var protectedIconApps = emptySet<String>()
 
     @Before fun setUp() {
         database = Room.inMemoryDatabaseBuilder(context, ConfigurationDatabase::class.java)
             .allowMainThreadQueries().build()
         repository = ConfigurationRepository(database)
         store = MaintenanceStore(context)
+        store.createInstallationSentinel()
     }
 
     @After fun tearDown() {
@@ -41,7 +45,7 @@ class ProfileManagerTest {
     }
 
     /** A new instance models a fresh process: nothing in memory survives, persisted state does. */
-    private fun manager() = ProfileManager(repository, store,
+    private fun manager(extraPlans: Map<OperationType, List<(OperationIntent) -> Unit>> = emptyMap()) = ProfileManager(repository, store,
         ProviderCompatibility(
             { ProviderSnapshot(PROVIDER, compatible) },
             { key -> ProviderSelfTestResult(key, true, true, true, true, true, true) },
@@ -51,8 +55,13 @@ class ProfileManagerTest {
         object : AppNativeData {
             override fun deleteIcons(appId: String) { deletedIcons += appId }
             override fun widgetsChanged() { widgetUpdates++ }
+            override fun reconcileIcons(apps: List<ConfiguredApp>, pending: List<JournalEntry>) {
+                iconReconciliations++
+                protectedIconApps = pending.mapNotNull { it.intent.appId }.toSet()
+                if (failIconReconciliation) error("Unable to prune icons")
+            }
         },
-        clock = { 1000L }, main = Dispatchers.Unconfined, io = Dispatchers.Unconfined)
+        extraPlans = extraPlans, clock = { 1000L }, main = Dispatchers.Unconfined, io = Dispatchers.Unconfined)
 
     private fun newApp(generation: Long = 0): ConfiguredApp = runBlocking {
         val id = UUID.randomUUID().toString()
@@ -67,6 +76,105 @@ class ProfileManagerTest {
 
     private fun attach(manager: ProfileManager, id: String) = runBlocking {
         manager.createAppWebView(context, id)
+    }
+
+    @Test fun missingSentinelNormalizesRestoreWithoutDeletingProfiles() = runBlocking {
+        val app = newApp(generation = 4)
+        database.apps().update(app.copy(profileState = ProfileState.CLEARING,
+            retiringProfileGeneration = 8, iconReference = "missing", sortPosition = 17))
+        store.close()
+        java.io.File(context.noBackupFilesDir, "maintenance.db").delete()
+        store = MaintenanceStore(context)
+        assertFalse(store.hasInstallationSentinel())
+        manager().startupMaintenance()
+        val restored = repository.get(app.id)!!
+        assertEquals(9L, restored.profileGeneration)
+        assertEquals(ProfileState.ACTIVE, restored.profileState)
+        assertNull(restored.retiringProfileGeneration)
+        assertNull(restored.iconReference)
+        assertEquals(0, restored.sortPosition)
+        assertTrue(store.hasInstallationSentinel())
+        assertTrue(backend.deleteCalls.isEmpty())
+        manager().startupMaintenance()
+        assertEquals(9L, repository.get(app.id)!!.profileGeneration)
+    }
+
+    @Test fun startupResumesRestoreAfterConfigurationCommitAndBeforeSentinel() = runBlocking {
+        val first = newApp(generation = 4)
+        val second = newApp(generation = 2)
+        val third = newApp(generation = 10) // Crash before its restore intent was recorded.
+        store.close()
+        check(java.io.File(context.noBackupFilesDir, "maintenance.db").delete())
+        store = MaintenanceStore(context)
+        val completed = store.begin(OperationIntent(OperationType.RESTORE, first.id,
+            newGeneration = 5), 1)
+        repository.normalizeRestored(first.id, 5)
+        store.completeStep(completed.id, 0)
+        store.begin(OperationIntent(OperationType.RESTORE, second.id, newGeneration = 3), 1)
+        repository.normalizeRestored(second.id, 3) // Cursor still pending after a crash.
+        manager().startupMaintenance()
+        assertEquals(5L, repository.get(first.id)!!.profileGeneration)
+        assertEquals(3L, repository.get(second.id)!!.profileGeneration)
+        assertEquals(11L, repository.get(third.id)!!.profileGeneration)
+        assertTrue(store.hasInstallationSentinel())
+        assertTrue(store.pendingOperations().isEmpty())
+        assertTrue(store.completedOperations().isEmpty())
+        assertTrue(backend.deleteCalls.isEmpty())
+    }
+
+    @Test fun failedRestoreBlocksExposureAndResumesOnRetry() = runBlocking {
+        val app = newApp(generation = 4)
+        store.close()
+        check(java.io.File(context.noBackupFilesDir, "maintenance.db").delete())
+        store = MaintenanceStore(context)
+        database.openHelper.writableDatabase.execSQL("""CREATE TRIGGER reject_restore
+            BEFORE UPDATE ON configured_apps BEGIN SELECT RAISE(FAIL, 'disk failure'); END""")
+        val manager = manager()
+        assertThrows(IllegalStateException::class.java) { runBlocking { manager.prepareConfiguration() } }
+        assertFalse(store.hasInstallationSentinel())
+        assertEquals(AttachResult.Blocked(AttachBlock.STARTUP_PENDING), attach(manager, app.id))
+        assertEquals(4L, repository.get(app.id)!!.profileGeneration)
+        database.openHelper.writableDatabase.execSQL("DROP TRIGGER reject_restore")
+        manager.startupMaintenance()
+        assertTrue(store.hasInstallationSentinel())
+        assertEquals(5L, repository.get(app.id)!!.profileGeneration)
+    }
+
+    @Test fun pendingJournalsProtectPermissionWidgetAndIconResources() = runBlocking {
+        store.begin(OperationIntent(OperationType.UPDATE_ICON, "pending", oldGeneration = 7,
+            resourceId = "pending/icon"), 1) // Missing plan remains pending.
+        store.putPermissionDecision(PermissionDecision("pending", 7, "https://example.com",
+            PermissionCapability.GEOLOCATION, SiteDecision.SITE_ALLOW))
+        store.putWidget(WidgetRecord(1, WidgetType.MULTI_APP, SelectionMode.SELECTED_SUBSET,
+            setOf("pending", "orphan")))
+        manager().prepareConfiguration()
+        assertNotNull(store.permissionDecision("pending", 7, "https://example.com",
+            PermissionCapability.GEOLOCATION))
+        assertEquals(setOf("pending"), store.widget(1)!!.selectedAppIds)
+        assertEquals(setOf("pending"), protectedIconApps)
+    }
+
+    @Test fun orphanCleanupFailureDoesNotBlockAttachmentAndDoesNotRepeatInProcess() = runBlocking {
+        val app = newApp()
+        failIconReconciliation = true
+        val manager = manager()
+        manager.startupMaintenance()
+        assertTrue(attach(manager, app.id) is AttachResult.Attached)
+        manager.startupMaintenance()
+        assertEquals(1, iconReconciliations)
+    }
+
+    @Test fun startupRetryResumesFailedJournalsWithoutRepeatingPruning() = runBlocking {
+        var failing = true
+        val entry = store.begin(OperationIntent(OperationType.UPDATE_ICON, "pending"), 1)
+        val manager = manager(mapOf(OperationType.UPDATE_ICON to listOf({
+            if (failing) error("Transient storage failure")
+        })))
+        assertTrue(entry.id in manager.startupMaintenance().journalFailures)
+        failing = false
+        assertTrue(manager.startupMaintenance().journalFailures.isEmpty())
+        assertEquals(1, store.operation(entry.id).completedSteps)
+        assertEquals(1, iconReconciliations)
     }
 
     @Test fun profileNamesAreOpaqueAndGenerationScoped() {

@@ -99,6 +99,27 @@ class ConfigurationRepository(private val database: ConfigurationDatabase) {
         }
     }
 
+    /** Fixed journal targets make replay safe even after the configuration commit. */
+    suspend fun normalizeRestored(id: String, generation: Long): ConfigurationWriteResult = write {
+        database.withTransaction {
+            dao.get(id)?.let { saved ->
+                dao.update(saved.copy(profileState = ProfileState.ACTIVE,
+                    profileGeneration = generation, retiringProfileGeneration = null,
+                    iconReference = null))
+            }
+            repairPositions()
+            ConfigurationWriteResult.Success
+        }
+    }
+
+    suspend fun clearMissingIcons(exists: (String) -> Boolean): ConfigurationWriteResult = write {
+        database.withTransaction {
+            dao.ordered().filter { it.iconReference?.let { ref -> !exists(ref) } == true }
+                .forEach { dao.update(it.copy(iconReference = null)) }
+            ConfigurationWriteResult.Success
+        }
+    }
+
     suspend fun reorder(ids: List<String>): ConfigurationWriteResult = write {
         database.withTransaction {
             val existing = dao.ordered().map { it.id }

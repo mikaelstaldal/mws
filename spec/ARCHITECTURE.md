@@ -105,7 +105,8 @@ At every process start, **before any profile is loaded**:
 - Resume every `CLEARING` record from its persisted retiring generation (when compatible).
 - Attachment and disposable-profile registration wait until this maintenance finishes. A disposable profile attaches only while it is registered in the current process and not yet retired. A leftover record is only ever cleaned up.
 - Delete unreferenced icon files, permission decisions for absent or retired generations, and widget records for instances `AppWidgetManager` no longer reports. Clear dangling references and request a widget refresh.
-- A resource is unreferenced only when no active journal can still adopt it.
+- Native reconciliation runs once per process, independently of provider compatibility, and gates main-screen and widget configuration reads. Journal recovery is retried on subsequent startup passes while orphan pruning remains once per process. Orphan cleanup failures are logged for retry at the next process start and do not block profile retirement or attachment.
+- A resource is unreferenced only when no active journal can still adopt it. Icon reconciliation retains explicit journal resource references and all icon generations belonging to an app with a pending intent. Permission pruning retains pending intents’ old and new generations; widget subset pruning retains their app IDs. Missing icon references are cleared; unresolved single-app widget targets remain available for the unavailable rendering.
 
 ### 5.4 Operation journal
 
@@ -170,7 +171,7 @@ The normative guarantee is the `ProfileStore` contract: after accepted deletion 
 
 - Backup-eligible: the configuration store only. Excluded: the maintenance store, icon renditions and all WebView profile data.
 - The configuration Room database is named `configuration.db` and uses `RoomDatabase.JournalMode.TRUNCATE` so the single backup-eligible file contains committed edits. The backup rules include that database file only.
-- A missing sentinel alongside a restored configuration store means first launch after restore or transfer. Normalization, resumable via the journal, creates the sentinel before exposing records. Every record becomes `ACTIVE` with `profileGeneration` greater than both restored generations, `retiringProfileGeneration` is cleared, and `iconReference` is cleared. `sortPosition` is repaired to contiguous. No deletion call is made, because no profile data was restored.
+- A missing sentinel alongside a restored configuration store means first launch after restore or transfer. Normalization, resumable via the journal, creates the sentinel before exposing records. A durable marker in a newly created maintenance store distinguishes restore from upgrading a pre-sentinel installation, whose existing profiles are retained. A corrupt maintenance store fails to open without automatic deletion, so corruption cannot be misclassified as restore. Each record has a journaled fixed target generation; completed restore entries remain until sentinel creation, so a replay after the configuration commit cannot advance the generation twice. An incomplete restore blocks startup. Every record becomes `ACTIVE` with `profileGeneration` greater than both restored generations, `retiringProfileGeneration` is cleared, and `iconReference` is cleared. `sortPosition` is repaired to contiguous. No deletion call is made, because no profile data was restored.
 
 ### 6.4 Resource exhaustion
 

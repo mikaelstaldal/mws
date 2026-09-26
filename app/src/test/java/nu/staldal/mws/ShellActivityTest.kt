@@ -52,6 +52,7 @@ class ShellActivityTest {
         database = Room.inMemoryDatabaseBuilder(context, ConfigurationDatabase::class.java).build()
         repository = ConfigurationRepository(database)
         store = MaintenanceStore(context)
+        store.createInstallationSentinel()
         val compatibility = ProviderCompatibility(
             { ProviderSnapshot(PROVIDER, compatible) },
             { key -> ProviderSelfTestResult(key, true, true, true, true, true, true) },

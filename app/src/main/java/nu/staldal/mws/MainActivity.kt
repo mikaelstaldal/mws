@@ -78,6 +78,12 @@ class MainActivity : AppCompatActivity() {
             compatibilityEntry.visibility = if (compatibility.current().compatible) View.GONE else View.VISIBLE
         }
         observation = lifecycleScope.launch {
+            try { ShellServices.shared(this@MainActivity).awaitStartup() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) {
+                listError.visibility = View.VISIBLE
+                return@launch
+            }
             repository.apps.catch { listError.visibility = View.VISIBLE }
                 .collect { apps ->
                     listError.visibility = View.GONE

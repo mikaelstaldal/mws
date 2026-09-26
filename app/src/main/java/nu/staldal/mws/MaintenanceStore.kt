@@ -3,6 +3,8 @@ package nu.staldal.mws
 import android.content.ContentValues
 import android.content.Context
 import android.database.Cursor
+import android.database.DatabaseErrorHandler
+import android.database.sqlite.SQLiteDatabaseCorruptException
 import android.database.sqlite.SQLiteDatabase
 import org.json.JSONObject
 import java.io.Closeable
@@ -15,10 +17,14 @@ class MaintenanceStore(context: Context) : Closeable {
 
     init {
         val file = File(context.noBackupFilesDir, "maintenance.db")
-        database = SQLiteDatabase.openOrCreateDatabase(file, null)
+        database = SQLiteDatabase.openOrCreateDatabase(file.path, null, DatabaseErrorHandler {
+            // Do not erase device-local evidence and mistake corruption for a restored install.
+            throw SQLiteDatabaseCorruptException("Corrupt maintenance store")
+        })
         check(pragmaValue("PRAGMA journal_mode=DELETE").equals("delete", ignoreCase = true))
         database.rawQuery("PRAGMA synchronous=FULL", null).use { it.moveToFirst() }
         check(pragmaValue("PRAGMA synchronous") == "2")
+        database.execSQL("CREATE TABLE IF NOT EXISTS restore_pending (singleton INTEGER PRIMARY KEY)")
         val version = pragmaValue("PRAGMA user_version").toInt()
         check(version in 0..1) { "Unsupported maintenance database version $version" }
         database.execSQL("""CREATE TABLE IF NOT EXISTS operations (
@@ -47,7 +53,10 @@ class MaintenanceStore(context: Context) : Closeable {
             singleton INTEGER PRIMARY KEY CHECK(singleton = 1))""")
         database.rawQuery("PRAGMA foreign_keys=ON", null).use { it.moveToFirst() }
         check(pragmaValue("PRAGMA foreign_keys") == "1")
-        if (version == 0) database.execSQL("PRAGMA user_version=1")
+        if (version == 0) {
+            database.execSQL("INSERT OR IGNORE INTO restore_pending VALUES (1)")
+            database.execSQL("PRAGMA user_version=1")
+        }
     }
 
     @Synchronized override fun close() = database.close()
@@ -168,6 +177,24 @@ class MaintenanceStore(context: Context) : Closeable {
         database.delete("permission_decisions", "app_id = ?", arrayOf(appId))
     }
 
+    @Synchronized fun prunePermissions(active: Set<Pair<String, Long>>) {
+        val obsolete = database.rawQuery("SELECT DISTINCT app_id,generation FROM permission_decisions", null)
+            .use { c -> buildList { while (c.moveToNext()) add(c.getString(0) to c.getLong(1)) } }
+        obsolete.filterNot(active::contains).forEach { (id, generation) ->
+            deletePermissionDecisions(id, generation)
+        }
+    }
+
+    @Synchronized fun pruneDanglingWidgetSelections(appIds: Set<String>) {
+        widgetIds().forEach { id ->
+            val record = requireNotNull(widget(id))
+            if (record.widgetType == WidgetType.MULTI_APP) {
+                val retained = record.selectedAppIds.intersect(appIds)
+                if (retained != record.selectedAppIds) putWidget(record.copy(selectedAppIds = retained))
+            }
+        }
+    }
+
     @Synchronized fun hasDiscoveryProfile(profileId: String): Boolean = database.rawQuery(
         "SELECT 1 FROM discovery_profiles WHERE profile_id = ?", arrayOf(profileId)).use(Cursor::moveToFirst)
 
@@ -239,9 +266,19 @@ class MaintenanceStore(context: Context) : Closeable {
     @Synchronized fun hasInstallationSentinel(): Boolean = database.rawQuery(
         "SELECT 1 FROM installation WHERE singleton = 1", null).use(Cursor::moveToFirst)
 
+    /** Existing pre-sentinel installs have a maintenance DB but no restore marker. */
+    @Synchronized fun needsRestoreNormalization(): Boolean = !hasInstallationSentinel() &&
+        (database.rawQuery("SELECT 1 FROM restore_pending", null).use(Cursor::moveToFirst) ||
+            (pendingOperations() + completedOperations()).any { it.intent.type == OperationType.RESTORE })
+
     @Synchronized fun createInstallationSentinel() {
-        database.insertWithOnConflict("installation", null, values("singleton" to 1),
-            SQLiteDatabase.CONFLICT_IGNORE)
+        database.beginTransaction()
+        try {
+            database.insertWithOnConflict("installation", null, values("singleton" to 1),
+                SQLiteDatabase.CONFLICT_IGNORE)
+            database.delete("restore_pending", null, null)
+            database.setTransactionSuccessful()
+        } finally { database.endTransaction() }
     }
 
     private fun pragmaValue(sql: String): String = database.rawQuery(sql, null).use { cursor ->

@@ -28,7 +28,10 @@ object SingleWidget {
     @Synchronized fun refresh(context: Context) {
         val ids = installed(context)
         if (ids.isEmpty()) return
-        val apps = runBlocking { ConfigurationRepository(ConfigurationDatabase.shared(context)).ordered() }
+        val apps = runBlocking {
+            ShellServices.shared(context).profiles.prepareConfiguration()
+            ConfigurationRepository(ConfigurationDatabase.shared(context)).ordered()
+        }
         MaintenanceStore(context).use { store ->
             ids.forEach { id ->
                 try {
@@ -103,6 +106,9 @@ class SingleWidgetConfigureActivity : AppCompatActivity() {
             finish(); return
         }
         lifecycleScope.launch {
+            try { ShellServices.shared(this@SingleWidgetConfigureActivity).profiles.prepareConfiguration() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { finish(); return@launch }
             val apps = withContext(Dispatchers.IO) {
                 ConfigurationRepository(ConfigurationDatabase.shared(this@SingleWidgetConfigureActivity)).ordered()
             }

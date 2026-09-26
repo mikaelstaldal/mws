@@ -1,6 +1,8 @@
 package nu.staldal.mws
 
 import android.content.Context
+import android.util.Log
+import kotlinx.coroutines.CancellationException
 import android.webkit.WebView
 import androidx.webkit.Profile
 import androidx.webkit.ProfileStore
@@ -116,6 +118,7 @@ class LiveShellRegistry : LiveShellCloser {
 interface AppNativeData {
     fun deleteIcons(appId: String)
     fun widgetsChanged()
+    fun reconcileIcons(apps: List<ConfiguredApp>, pending: List<JournalEntry>) {}
 }
 
 /** A WebView bound to [profileName]. Release it through [ProfileManager.release]. */
@@ -194,6 +197,11 @@ class ProfileManager(
     private val io: CoroutineDispatcher = Dispatchers.IO,
 ) {
     private val journal = OperationJournal(maintenance, extraPlans + mapOf(
+        OperationType.RESTORE to listOf({ intent ->
+            val result = runBlocking { repository.normalizeRestored(requireNotNull(intent.appId),
+                requireNotNull(intent.newGeneration)) }
+            if (result is ConfigurationWriteResult.StorageFailure) throw result.cause
+        }),
         OperationType.DELETE_PERMISSION_DECISIONS to listOf({ intent ->
             maintenance.deletePermissionDecisions(requireNotNull(intent.appId),
                 requireNotNull(intent.oldGeneration))
@@ -219,6 +227,8 @@ class ProfileManager(
     private val live = mutableMapOf<String, MutableList<WebView>>()
 
     @Volatile private var startupComplete = false
+    private var nativeStartupComplete = false
+    private var nativeResume = ResumeResult(emptyList(), emptyMap())
 
     /** Disposable profiles registered by this process and not yet retired. Guarded by [lifecycle]. */
     private val openDisposables = mutableSetOf<String>()
@@ -293,12 +303,66 @@ class ProfileManager(
         }
     }
 
+    /** Native normalization is also the gate for widgets, without loading provider profiles. */
+    suspend fun prepareConfiguration() = lifecycle.withLock { prepareNativeStartup() }
+
+    private suspend fun prepareNativeStartup() {
+        if (nativeStartupComplete) return
+        // Persist every target before touching restored records. The sentinel commits only after
+        // all entries finish; completed entries also identify records already normalized on replay.
+        if (withContext(io) { maintenance.needsRestoreNormalization() }) {
+            withContext(io) {
+                val recorded = (maintenance.pendingOperations() + maintenance.completedOperations())
+                    .filter { it.intent.type == OperationType.RESTORE }.map { it.intent.appId }.toSet()
+                for (app in repository.ordered().filterNot { it.id in recorded }) {
+                    val generation = Math.addExact(maxOf(app.profileGeneration,
+                        app.retiringProfileGeneration ?: app.profileGeneration), 1L)
+                    journal.start(OperationIntent(OperationType.RESTORE, app.id,
+                        newGeneration = generation))
+                }
+            }
+        }
+        val resumed = withContext(io) { journal.resumeOnStartup() }
+        withContext(io) {
+            check(maintenance.pendingOperations().none { it.intent.type == OperationType.RESTORE }) {
+                "Restore normalization incomplete"
+            }
+            if (!maintenance.hasInstallationSentinel()) maintenance.createInstallationSentinel()
+            maintenance.completedOperations().filter { it.intent.type == OperationType.RESTORE }
+                .forEach { maintenance.discardCompleted(it.id) }
+        }
+        try {
+            withContext(io) {
+                val repaired = repository.repairOrder()
+                if (repaired is ConfigurationWriteResult.StorageFailure) throw repaired.cause
+                val apps = repository.ordered()
+                val pending = maintenance.pendingOperations()
+                // Preserve decisions a journal may still adopt; prune them on a later successful run.
+                maintenance.prunePermissions(apps.map { it.id to it.profileGeneration }.toSet() +
+                    pending.flatMap { entry -> listOfNotNull(entry.intent.oldGeneration,
+                        entry.intent.newGeneration).mapNotNull { generation ->
+                        entry.intent.appId?.let { it to generation }
+                    } })
+                maintenance.pruneDanglingWidgetSelections(apps.map { it.id }.toSet() +
+                    pending.mapNotNull { it.intent.appId })
+                nativeData.reconcileIcons(apps, pending)
+            }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { Log.w("ProfileManager", "Orphan reconciliation failed", failure) }
+        nativeResume = resumed
+        nativeStartupComplete = true
+    }
+
     /**
      * A§5.3: runs before any app profile is loaded. Journal intents resume
      * first, so a tombstone is never retried while its removal can still be adopted.
      */
     suspend fun startupMaintenance(): StartupReport = lifecycle.withLock {
-        val resumed = withContext(io) { journal.resumeOnStartup() }
+        val nativeWasComplete = nativeStartupComplete
+        prepareNativeStartup()
+        // Compatibility recovery retries journal failures, without repeating orphan pruning.
+        val resumed = if (nativeWasComplete) withContext(io) { journal.resumeOnStartup() } else nativeResume
+        nativeResume = resumed
         val clearingFailures = mutableMapOf<String, Throwable>()
         if (compatibility.mayAccessProfile()) {
             val apps = repository.ordered()

@@ -117,6 +117,22 @@ class IconStore(private val context: Context) {
         }?.forEach(File::deleteRecursively)
     }
 
+    fun exists(reference: String): Boolean = REFERENCE.matches(reference) &&
+        IconPipeline.SIZES.all { File(root, "$reference/$it.png").isFile }
+
+    /** Pending journals protect both explicit resources and every generation of their app. */
+    fun reconcile(references: Set<String>, protectedApps: Set<String>) {
+        root.listFiles()?.forEach { app ->
+            if (app.name !in protectedApps) {
+                app.listFiles()?.forEach { generation ->
+                    if ("${app.name}/${generation.name}" !in references)
+                        check(generation.deleteRecursively())
+                }
+                if (app.listFiles()?.isEmpty() == true) check(app.delete())
+            }
+        }
+    }
+
     private fun writePng(path: File, bitmap: Bitmap) {
         FileOutputStream(path).use { output ->
             check(bitmap.compress(Bitmap.CompressFormat.PNG, 100, output))
