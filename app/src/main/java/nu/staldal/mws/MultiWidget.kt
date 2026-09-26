@@ -56,33 +56,29 @@ object MultiWidget {
         val manager = AppWidgetManager.getInstance(context)
         val ids = installed(context)
         if (ids.isEmpty()) return
-        val apps = runBlocking {
-            ShellServices.shared(context).profiles.prepareConfiguration()
-            ConfigurationRepository(ConfigurationDatabase.shared(context)).ordered()
-        }
-        MaintenanceStore(context).use { store ->
-            for (id in ids) {
-                val record = store.widget(id)
-                val visible = select(apps, record)
-                val views = RemoteViews(context.packageName, R.layout.widget_multi)
-                views.setViewVisibility(R.id.widget_empty, if (visible.isEmpty()) View.VISIBLE else View.GONE)
-                views.setOnClickPendingIntent(R.id.widget_header, mainIntent(context, id))
-                views.setOnClickPendingIntent(R.id.widget_empty, mainIntent(context, id))
-                val adapter = Intent(context, MultiWidgetService::class.java)
-                    .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
-                    .setData(android.net.Uri.parse("mws-widget:$id"))
-                views.setRemoteAdapter(R.id.widget_list, adapter)
-                // Android collections merge each row's app ID into this explicit template.
-                views.setPendingIntentTemplate(R.id.widget_list, PendingIntent.getActivity(
-                    context, id, Intent(context, ShellActivity::class.java)
-                        .setAction(ShellActivity.ACTION_OPEN)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT),
-                    PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag()))
-                manager.updateAppWidget(id, views)
-                manager.notifyAppWidgetViewDataChanged(id, R.id.widget_list)
-            }
+        for (id in ids) {
+            val views = baseViews(context, id)
+            val adapter = Intent(context, MultiWidgetService::class.java)
+                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
+                .setData(android.net.Uri.parse("mws-widget:$id"))
+            views.setRemoteAdapter(R.id.widget_list, adapter)
+            // Android collections merge each row's app ID into this explicit template.
+            views.setPendingIntentTemplate(R.id.widget_list, PendingIntent.getActivity(
+                context, id, Intent(context, ShellActivity::class.java)
+                    .setAction(ShellActivity.ACTION_OPEN)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT),
+                PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag()))
+            manager.updateAppWidget(id, views)
+            manager.notifyAppWidgetViewDataChanged(id, R.id.widget_list)
         }
     }
+
+    internal fun baseViews(context: Context, id: Int): RemoteViews =
+        RemoteViews(context.packageName, R.layout.widget_multi).apply {
+            setEmptyView(R.id.widget_list, R.id.widget_empty)
+            setOnClickPendingIntent(R.id.widget_header, mainIntent(context, id))
+            setOnClickPendingIntent(R.id.widget_empty, mainIntent(context, id))
+        }
 
     internal fun select(apps: List<ConfiguredApp>, record: WidgetRecord?): List<ConfiguredApp> =
         if (record?.widgetType == WidgetType.MULTI_APP &&

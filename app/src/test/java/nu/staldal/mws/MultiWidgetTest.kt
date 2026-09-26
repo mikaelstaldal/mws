@@ -20,6 +20,26 @@ class MultiWidgetTest {
             launchUrl = "https://example.com/$id", scope = "https://example.com/",
             profileState = state, sortPosition = position, createdAt = 1, updatedAt = 1)
 
+    @Test fun emptyCollectionHidesListAndEntireEmptyAreaOpensMainScreen() {
+        val context = RuntimeEnvironment.getApplication()
+        val root = MultiWidget.baseViews(context, 981).apply(context, null)
+        val list = root.findViewById<android.widget.ListView>(R.id.widget_list)
+        val empty = root.findViewById<View>(R.id.widget_empty)
+        list.adapter = android.widget.ArrayAdapter<String>(context,
+            android.R.layout.simple_list_item_1, emptyList())
+        assertSame(empty, list.emptyView)
+        assertEquals(View.GONE, list.visibility)
+        assertEquals(View.VISIBLE, empty.visibility)
+        assertEquals(android.view.ViewGroup.LayoutParams.MATCH_PARENT, empty.layoutParams.height)
+        assertTrue(empty.performClick())
+        val started = org.robolectric.Shadows.shadowOf(context).nextStartedActivity
+        assertEquals(MainActivity::class.java.name, started.component?.className)
+        list.adapter = android.widget.ArrayAdapter(context,
+            android.R.layout.simple_list_item_1, listOf("app"))
+        assertEquals(View.VISIBLE, list.visibility)
+        assertEquals(View.GONE, empty.visibility)
+    }
+
     @Test fun instanceSelectionsKeepCanonicalOrderAndClearingRows() {
         val apps = listOf(app("b", 0), app("a", 1, ProfileState.CLEARING), app("c", 2))
         val first = WidgetRecord(11, WidgetType.MULTI_APP, SelectionMode.SELECTED_SUBSET,
