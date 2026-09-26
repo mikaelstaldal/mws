@@ -37,4 +37,7 @@
     <string name="provider_check_failed">Could not check WebView compatibility. Restart the app to retry.</string>
     <string name="provider_settings">Open WebView provider settings</string>
     <string name="provider_settings_unavailable">Provider settings are unavailable on this device. Open your app store or Android settings and update the WebView provider.</string>
+    <string name="widget_unavailable">App unavailable</string>
+    <string name="widget_maintenance">App data maintenance</string>
+    <string name="widget_pick_app">Choose an app</string>
 </resources>

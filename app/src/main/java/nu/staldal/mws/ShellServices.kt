@@ -68,6 +68,16 @@ class ShellServices(
             instance = services
         }
 
+        private fun refreshWidgets(context: Context, reconcile: Boolean = false) {
+            for (update in listOf<() -> Unit>(
+                { if (reconcile) MultiWidget.reconcile(context) else MultiWidget.refresh(context) },
+                { if (reconcile) SingleWidget.reconcile(context) else SingleWidget.refresh(context) })) {
+                try { update() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { Log.w("ShellServices", "Widget refresh failed", failure) }
+            }
+        }
+
         private fun create(context: Context): ShellServices {
             val repository = ConfigurationRepository(ConfigurationDatabase.shared(context))
             val maintenance = MaintenanceStore(context)
@@ -81,7 +91,7 @@ class ShellServices(
                 AndroidWebProfileBackend(), shells, object : AppNativeData {
                     override fun deleteIcons(appId: String) = icons.delete(appId)
                     override fun widgetsChanged() {
-                        try { MultiWidget.refresh(context) }
+                        try { refreshWidgets(context) }
                         catch (failure: Exception) { Log.w("ShellServices", "Widget refresh failed", failure) }
                     }
                 })
@@ -89,7 +99,7 @@ class ShellServices(
                 IsolationProbe(context, profiles), DeletionProbe(context)))
             CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
                 repository.apps.collect {
-                    try { MultiWidget.refresh(context) }
+                    try { refreshWidgets(context) }
                     catch (cancelled: CancellationException) { throw cancelled }
                     catch (_: Exception) {
                         // A later configuration change or provider update retries the refresh.
@@ -97,7 +107,7 @@ class ShellServices(
                 }
             }
             return ShellServices(repository, compatibility, shells, profiles, icons,
-                { runner.runIfNeeded() }, { withContext(Dispatchers.IO) { MultiWidget.reconcile(context) } })
+                { runner.runIfNeeded() }, { withContext(Dispatchers.IO) { refreshWidgets(context, reconcile = true) } })
         }
     }
 }

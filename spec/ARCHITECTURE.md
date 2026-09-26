@@ -343,6 +343,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 ## 13. Widgets
 
 - A multi-app widget uses a `RemoteViews` collection (`RemoteViewsService` / `RemoteCollectionItems` on API 31+), is resizable, and orders rows by `sortPosition`. A single-app widget targets 1×1 and is reconfigurable on API 31+.
+- Single-app widgets use an immutable explicit activity `PendingIntent` carrying only the opaque app ID for active targets; unavailable or maintenance targets open the main screen. Configuration validates that the widget ID belongs to the single-app provider and rechecks that the chosen app is active before saving. Missing or wrong-type records render as unavailable.
 - Header and empty-state `PendingIntent`s are immutable and explicit. Android collection rows require a mutable, explicit activity `PendingIntent` template plus per-row fill-in intents; direct per-row pending intents are unsupported by `RemoteViews` collections. The fill-in carries only the opaque app ID. `ShellActivity` validates it against the current DB and blocks removed or `CLEARING` apps before loading. No intent or widget record contains a URL or credential. See [Android collection click handling](https://developer.android.com/develop/ui/views/appwidgets/collections#clicks).
 - Updates are triggered by add, edit, remove, icon change, reorder, clear state changes, `BOOT_COMPLETED`, `MY_PACKAGE_REPLACED` and `onAppWidgetOptionsChanged`.
 - Rendering never creates a WebView and never needs the network.
