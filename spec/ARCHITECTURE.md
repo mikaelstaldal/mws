@@ -247,6 +247,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 
 ### 8.5 Stage results and draft state
 
+- `EditorDiscovery` holds completed metadata stages and unchanged-URL snapshot fallbacks. `EditorActivity` owns the disposable `DiscoverySession`, cancels native fetches on URL changes, Save and destruction, and publishes selected icon renditions only during Save. URL and icon previews are separate from non-fatal status notices. A favicon fallback starts at document completion independently of DOM extraction; later metadata work shares its aggregate response-body budget. Page icons respect captured media matching and per-link referrer policy. Retained manifest snapshots supply the native client’s manifest response context for icon fetches.
 - The editor draft keeps per-stage results (document/finalUrl, DOM, manifest, colors, name, icon). Save cancels the attempt and uses the completed stages plus fallbacks.
 - A new commit recomputes `launchUrl` and `scope` atomically from the new `finalUrl` and the effective manifest. The effective manifest is the new one if the manifest stage succeeded, else the retained snapshot for an unchanged URL, else none.
 

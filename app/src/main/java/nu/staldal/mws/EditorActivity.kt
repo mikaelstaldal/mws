@@ -8,6 +8,8 @@ import android.text.InputType
 import android.text.TextWatcher
 import android.view.View
 import android.view.inputmethod.EditorInfo
+import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -21,6 +23,9 @@ import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.UUID
@@ -52,6 +57,140 @@ class EditorActivity : AppCompatActivity() {
     private var hostName: String? = null
     private var programmatic = false
     private var restoredState: Bundle? = null
+    private lateinit var discoveryHost: FrameLayout
+    private lateinit var discoveryStatus: TextView
+    private lateinit var discoveryUrl: TextView
+    private lateinit var suggestion: MaterialButton
+    private lateinit var iconPreview: ImageView
+    private var discovery: DiscoverySession? = null
+    private var stages: EditorDiscovery? = null
+    private var metadataJob: Job? = null
+    private var blockedDeadline: Job? = null
+    private var nativeClient: NativeDiscoveryClient? = null
+    private var stageIdentity = 0L
+    private var discoveryBytes = java.util.concurrent.atomic.AtomicLong(0)
+
+    private fun cancelDiscovery() {
+        stageIdentity++
+        discoveryBytes = java.util.concurrent.atomic.AtomicLong(0)
+        blockedDeadline?.cancel()
+        blockedDeadline = null
+        nativeClient?.cancel()
+        nativeClient = null
+        metadataJob?.cancel()
+        discovery?.cancel()
+    }
+
+    private fun prepareDiscovery() {
+        discovery = DiscoverySession(discoveryHost, ShellServices.shared(this).profiles,
+            lifecycleScope, onDocument = { attempt, result ->
+                stages?.document(result)
+                updateDiscoveryPreview()
+                if (result.crossOrigin) {
+                    discoveryStatus.setText(R.string.editor_discovery_cross_origin)
+                    discovery?.finish(attempt.id)
+                } else {
+                    if (result.failure != null) discoveryStatus.setText(R.string.editor_discovery_failed)
+                    // Start the independent favicon fallback immediately. DOM success replaces
+                    // this work with manifest/page-icon discovery; a stalled DOM cannot skip it.
+                    fetchMetadata(attempt, null)
+                }
+            }, onOverallTimeout = { _ ->
+                nativeClient?.cancel()
+                metadataJob?.cancel()
+                discoveryStatus.setText(R.string.editor_discovery_failed)
+                updateDiscoveryPreview()
+            }, onBlocked = {
+                discoveryStatus.setText(R.string.editor_discovery_failed)
+                stages?.let { current ->
+                    fetchMetadata(DiscoveryAttempt(-1,
+                        UrlPolicy.parseHttps(current.configuredUrl)!!, DiscoveryTrigger.REFRESH), null)
+                    blockedDeadline?.cancel()
+                    blockedDeadline = lifecycleScope.launch {
+                        delay(30_000)
+                        nativeClient?.cancel()
+                        metadataJob?.cancel()
+                        discoveryStatus.setText(R.string.editor_discovery_failed)
+                    }
+                }
+            }, onSnapshot = { attempt, snapshot -> fetchMetadata(attempt, snapshot) })
+    }
+
+    private fun fetchMetadata(attempt: DiscoveryAttempt, snapshot: DiscoveryDomSnapshot?) {
+        val current = stages ?: return
+        val identity = stageIdentity
+        metadataJob?.cancel()
+        nativeClient?.cancel()
+        val document = current.finalUrl ?: current.configuredUrl
+        val client = NativeDiscoveryClient(document, UrlPolicy.parseHttps(document)!!.origin,
+            attemptBytes = discoveryBytes)
+        nativeClient = client
+        metadataJob = lifecycleScope.launch {
+            if (snapshot != null) current.title = snapshot.title
+            updateDiscoveryPreview()
+            val link = snapshot?.selectedManifest
+            val response = withContext(Dispatchers.IO) {
+                link?.takeIf { it.usable }?.url?.let {
+                    client.fetchManifest(it, link.crossorigin, link.referrerPolicy
+                        ?.takeIf(String::isNotBlank) ?: "no-referrer")
+                }
+            }
+            if (identity != stageIdentity || stages !== current) return@launch
+            var manifestFailed = link != null && response == null
+            if (snapshot != null && link == null) current.manifestCompleted(null)
+            else if (response != null) {
+                val result = ManifestProcessor.process(response.body.toString(Charsets.UTF_8),
+                    response.url, current.finalUrl, current.configuredUrl, current.title)
+                if (result.snapshot != null) current.manifestCompleted(result.snapshot)
+                else manifestFailed = true
+            }
+            updateDiscoveryPreview()
+            val candidates = mutableListOf<IconCandidate>()
+            if (response == null) current.manifest?.let { client.retainManifestSource(it.manifestUrl) }
+            if (snapshot != null) candidates += current.manifest?.icons.orEmpty()
+            snapshot?.icons?.filter { it.usable && it.mediaMatches }?.forEachIndexed { index, link ->
+                candidates += IconCandidate(link.url!!, IconCandidate.Source.PAGE,
+                    link.sizes, link.type, null, index, link.referrerPolicy)
+            }
+            candidates += IconCandidate(UrlPolicy.parseHttps(document)!!.origin + "/favicon.ico",
+                IconCandidate.Source.FAVICON)
+            client.setReferrerPolicies("no-referrer", "no-referrer")
+            val icon = withContext(Dispatchers.IO) { IconPipeline.select(candidates, client) }
+            if (identity != stageIdentity || stages !== current) return@launch
+            current.icon = icon ?: current.icon
+            updateDiscoveryPreview()
+            discoveryStatus.setText(if (snapshot == null || manifestFailed || icon == null || client.limitsExceeded)
+                R.string.editor_discovery_failed else R.string.editor_discovery_credentialless)
+            if (snapshot != null || attempt.documentResult?.failure != null) discovery?.finish(attempt.id)
+        }
+    }
+
+    private fun updateDiscoveryPreview() {
+        val current = stages ?: return
+        val proposed = current.suggestedName()
+        if (nameSource != NameSource.USER_EDITED) {
+            setProgrammatically { nameField.setText(proposed) }
+            hostName = proposed
+            if (nameLayout.error != null) showNameError()
+        }
+        suggestion.text = getString(R.string.editor_use_suggested_name, proposed)
+        suggestion.visibility = if (nameSource == NameSource.USER_EDITED &&
+            AppNames.normalize(nameField.text.toString()) != proposed) View.VISIBLE else View.GONE
+        discoveryUrl.text = current.resolved().launchUrl
+        if (current.icon != null) iconPreview.setImageBitmap(current.icon?.source)
+        else showRetainedIcon()
+    }
+
+    private fun showRetainedIcon() {
+        val store = IconStore(this)
+        val retained = saved?.takeIf { old ->
+            val current = stages?.configuredUrl?.let(UrlPolicy::parseHttps)
+            val previous = UrlPolicy.parseHttps(old.configuredUrl)
+            current != null && previous != null && UrlPolicy.sameOrigin(current, previous)
+        }?.iconReference?.let { store.load(it, 48) }
+        if (retained != null) iconPreview.setImageBitmap(retained)
+        else iconPreview.setImageDrawable(store.defaultIcon())
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,6 +211,8 @@ class EditorActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        cancelDiscovery()
+        lifecycleScope.launch(NonCancellable) { discovery?.close() }
         myPassClient.close()
         super.onDestroy()
     }
@@ -137,6 +278,35 @@ class EditorActivity : AppCompatActivity() {
             addView(nameField)
         }
         column.addView(nameLayout)
+        discoveryStatus = TextView(this).apply { id = R.id.editor_discovery_status }
+        column.addView(discoveryStatus)
+        discoveryUrl = TextView(this)
+        column.addView(discoveryUrl)
+        iconPreview = ImageView(this).apply { id = R.id.editor_discovery_icon }
+        column.addView(iconPreview, LinearLayout.LayoutParams(dp(48), dp(48)))
+        suggestion = MaterialButton(this).apply {
+            id = R.id.editor_suggested_name
+            visibility = View.GONE
+            setOnClickListener {
+                nameSource = NameSource.DISCOVERED
+                updateDiscoveryPreview()
+            }
+        }
+        column.addView(suggestion)
+        column.addView(MaterialButton(this).apply {
+            id = R.id.editor_refresh_details
+            setText(R.string.editor_refresh_details)
+            setOnClickListener {
+                val url = UrlPolicy.normalizeUserInput(urlField.text.toString()) ?: return@setOnClickListener
+                cancelDiscovery()
+                if (stages?.configuredUrl != url.serialized) stages = EditorDiscovery(saved, url.serialized)
+                discoveryStatus.setText(R.string.editor_discovery_loading)
+                discovery?.refresh(url.serialized)
+            }
+        })
+        discoveryHost = FrameLayout(this)
+        column.addView(discoveryHost, LinearLayout.LayoutParams(-1, dp(96)))
+        prepareDiscovery()
 
         myPassStatus = MyPassStatusIndicator(this).apply {
             id = R.id.editor_mypass_status
@@ -185,11 +355,15 @@ class EditorActivity : AppCompatActivity() {
     override fun onPostCreate(savedInstanceState: Bundle?) {
         super.onPostCreate(savedInstanceState)
         urlField.addTextChangedListener(watcher { onUrlChanged() })
-        urlField.setOnFocusChangeListener { _, focused -> if (!focused) showUrlError() }
+        urlField.setOnFocusChangeListener { _, focused -> if (!focused) {
+            showUrlError()
+            discovery?.focusLost(urlField.text.toString())
+        } }
         nameField.addTextChangedListener(watcher {
             if (!programmatic) {
                 nameSource = NameSource.USER_EDITED
                 hostName = null
+                if (stages != null) updateDiscoveryPreview()
             }
             if (nameLayout.error != null) showNameError()
         })
@@ -250,12 +424,30 @@ class EditorActivity : AppCompatActivity() {
                 thirdPartyCookies.isChecked = app.allowThirdPartyCookies
             }
         }
+        val url = UrlPolicy.normalizeUserInput(urlField.text.toString())
+        stages = url?.let { EditorDiscovery(app, it.serialized) }
+        discoveryUrl.text = stages?.resolved()?.launchUrl.orEmpty()
+        showRetainedIcon()
+        if (restored != null && url != null && app?.configuredUrl != url.serialized)
+            discovery?.urlChanged(url.serialized)
         saveButton.isEnabled = true
     }
 
     /** Name follows the canonical host while it is empty or still host-derived (R§6.1). */
     private fun onUrlChanged() {
+        if (programmatic) return
         val result = UrlPolicy.validateUserInput(urlField.text.toString())
+        val canonical = (result as? UrlPolicy.UserInput.Valid)?.url?.serialized
+        if (canonical != stages?.configuredUrl) {
+            cancelDiscovery()
+            stages = canonical?.let { EditorDiscovery(saved, it) }
+            suggestion.visibility = View.GONE
+            showRetainedIcon()
+            discoveryUrl.text = canonical.orEmpty()
+            if (canonical == null) discoveryStatus.text = ""
+            else discoveryStatus.setText(R.string.editor_discovery_loading)
+            discovery?.urlChanged(urlField.text.toString())
+        }
         if (urlLayout.error != null) showUrlError()
         if (result !is UrlPolicy.UserInput.Valid || nameSource == NameSource.USER_EDITED) return
         val current = nameField.text.toString()
@@ -323,7 +515,10 @@ class EditorActivity : AppCompatActivity() {
         val name = AppNames.normalize(nameField.text.toString())!!
         val draft = EditorDraft(name, nameSource, url, thirdPartyCookies.isChecked)
         val now = System.currentTimeMillis()
-        val record = draft.record(saved, saved?.id ?: UUID.randomUUID().toString(), now)
+        cancelDiscovery()
+        discoveryStatus.setText(R.string.editor_discovery_stopped)
+        val base = draft.record(saved, saved?.id ?: UUID.randomUUID().toString(), now)
+        val record = stages?.apply(base) ?: base
         saving = true
         saveButton.isEnabled = false
         confirmSensitive(record, EditorConsent.pending(record)) { consented ->
@@ -352,7 +547,12 @@ class EditorActivity : AppCompatActivity() {
         lifecycleScope.launch {
             // Once Save starts, the write completes even if the activity is destroyed.
             val result = withContext(NonCancellable) {
-                if (adding) repository.add(record) else repository.update(record)
+                val icon = stages?.icon
+                val stored = if (icon == null) record else withContext(Dispatchers.IO) {
+                    record.copy(iconReference = runCatching { IconStore(this@EditorActivity)
+                        .save(record.id, icon) }.getOrNull() ?: record.iconReference)
+                }
+                if (adding) repository.add(stored) else repository.update(stored)
             }
             if (isDestroyed) return@launch
             when (result) {

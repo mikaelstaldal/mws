@@ -8,6 +8,7 @@ data class IconCandidate(
     val type: String? = null,
     val purpose: String? = null,
     val documentOrder: Int = 0,
+    val referrerPolicy: String? = null,
 ) {
     enum class Source { MANIFEST, PAGE, FAVICON }
 

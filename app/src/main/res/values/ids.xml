@@ -31,4 +31,8 @@
     <item name="editor_third_party_cookies_note" type="id" />
     <item name="editor_cancel" type="id" />
     <item name="editor_save" type="id" />
+    <item name="editor_discovery_status" type="id" />
+    <item name="editor_discovery_icon" type="id" />
+    <item name="editor_suggested_name" type="id" />
+    <item name="editor_refresh_details" type="id" />
 </resources>

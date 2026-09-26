@@ -206,8 +206,8 @@ class DiscoverySession(
             val state = attempt?.takeIf { it.id == id } ?: return
             if (state.commit(url)) {
                 val document = identity.request()
-                if (document != null && state.documentResult?.finalUrl != null) extract(view, state, document)
                 onDocument(state, checkNotNull(state.documentResult))
+                if (document != null && state.documentResult?.finalUrl != null) extract(view, state, document)
                 scheduleTimer()
             }
         }

@@ -54,6 +54,7 @@ class NativeDiscoveryClient(
     private val limits: Limits = Limits(),
     private val open: (String) -> HttpURLConnection = { URL(it).openConnection() as HttpURLConnection },
     private val nowMillis: () -> Long = { System.nanoTime() / 1_000_000 },
+    private val attemptBytes: AtomicLong = AtomicLong(0),
 ) : IconFetcher {
     data class Limits(
         val resourceMillis: Long = 10_000,
@@ -65,12 +66,14 @@ class NativeDiscoveryClient(
 
     private val cancelled = AtomicBoolean(false)
     private val identity = AtomicLong(0)
-    private var aggregateBytes = 0L
     @Volatile private var activeConnection: HttpURLConnection? = null
     @Volatile private var manifestOrigin: String? = null
     @Volatile private var manifestUrl: String? = null
     @Volatile private var pageReferrerPolicy = "strict-origin-when-cross-origin"
     @Volatile private var documentReferrerPolicy = "strict-origin-when-cross-origin"
+
+    @Volatile var limitsExceeded: Boolean = false
+        private set
 
     val authenticatedMetadataWarning: Boolean get() = !fullContextCookiesVerified || cookieAdapter == null
 
@@ -105,6 +108,13 @@ class NativeDiscoveryClient(
         }
     }
 
+    /** Restored snapshots carry a sanitized manifest response URL for icon request context. */
+    fun retainManifestSource(url: String) {
+        val parsed = UrlPolicy.parseHttps(url) ?: return
+        manifestUrl = parsed.serialized
+        manifestOrigin = parsed.origin
+    }
+
     override fun fetch(candidate: IconCandidate): ByteArray? {
         val doc = UrlPolicy.parseHttps(documentUrl) ?: return null
         val role: DiscoveryCookieContext.Role
@@ -122,7 +132,7 @@ class NativeDiscoveryClient(
                 role = DiscoveryCookieContext.Role.PAGE_ICON
                 baseOrigin = doc.origin
                 referrer = documentUrl
-                policy = pageReferrerPolicy
+                policy = candidate.referrerPolicy?.takeIf(String::isNotBlank) ?: pageReferrerPolicy
             }
             IconCandidate.Source.FAVICON -> {
                 role = DiscoveryCookieContext.Role.FAVICON
@@ -151,6 +161,7 @@ class NativeDiscoveryClient(
         if (CookieHandler.getDefault() != null) return null
         val start = nowMillis()
         val watchdog = TIMER.schedule({
+            limitsExceeded = true
             identity.compareAndSet(requestId, requestId + 1)
             activeConnection?.disconnect()
         }, limits.resourceMillis, TimeUnit.MILLISECONDS)
@@ -164,7 +175,7 @@ class NativeDiscoveryClient(
         while (true) {
             if (cancelled.get() || identity.get() != requestId) return null
             val remaining = limits.resourceMillis - (nowMillis() - start)
-            if (remaining <= 0) return null
+            if (remaining <= 0) { limitsExceeded = true; return null }
             val eligible = current.origin == credentialOrigin ||
                 (role == DiscoveryCookieContext.Role.MANIFEST &&
                     credentials == DiscoveryCookieContext.Credentials.INCLUDE)
@@ -200,7 +211,7 @@ class NativeDiscoveryClient(
                     cookieAdapter?.receiveSetCookie(context, conn.headerFields.entries
                         .filter { it.key.equals("Set-Cookie", true) }.flatMap { it.value.orEmpty() })
                 if (status in 300..399 && status != 304) {
-                    if (redirects++ >= limits.redirects) return null
+                    if (redirects++ >= limits.redirects) { limitsExceeded = true; return null }
                     val location = conn.getHeaderField("Location") ?: return null
                     val next = resolve(current.serialized, location) ?: return null
                     if (role == DiscoveryCookieContext.Role.MANIFEST &&
@@ -247,9 +258,9 @@ class NativeDiscoveryClient(
                             nowMillis() - start >= limits.resourceMillis) return null
                         val n = input.read(buffer)
                         if (n < 0) break
-                        if (output.size() + n > bodyLimit) return null
-                        aggregateBytes += n
-                        if (aggregateBytes > limits.attemptBytes) return null
+                        if (output.size() + n > bodyLimit) { limitsExceeded = true; return null }
+                        val aggregateBytes = attemptBytes.addAndGet(n.toLong())
+                        if (aggregateBytes > limits.attemptBytes) { limitsExceeded = true; return null }
                         output.write(buffer, 0, n)
                     }
                 }
@@ -294,7 +305,10 @@ class NativeDiscoveryClient(
                 val n = input.read(bytes, offset, length)
                 if (n > 0) {
                     encodedBytes += n
-                    if (encodedLimit != null && encodedBytes > encodedLimit) throw LimitExceeded()
+                    if (encodedLimit != null && encodedBytes > encodedLimit) {
+                        limitsExceeded = true
+                        throw LimitExceeded()
+                    }
                 }
                 return n
             }

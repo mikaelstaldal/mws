@@ -167,6 +167,25 @@ class NativeDiscoveryClientTest {
         assertEquals("https://site.example/m", client(allowed, final).fetchManifest(source, null)?.url)
     }
 
+    @Test fun fallbackAndMetadataClientsShareAttemptBudget() {
+        val budget = java.util.concurrent.atomic.AtomicLong(0)
+        fun stage() = NativeDiscoveryClient(doc, "https://site.example",
+            limits = NativeDiscoveryClient.Limits(attemptBytes = 3),
+            open = { Reply("https://site.example/icon", body = byteArrayOf(1, 2)) },
+            attemptBytes = budget)
+        val candidate = IconCandidate("https://site.example/icon", IconCandidate.Source.PAGE)
+        assertNotNull(stage().fetch(candidate))
+        val next = stage()
+        assertNull(next.fetch(candidate))
+        assertTrue(next.limitsExceeded)
+    }
+
+    @Test fun retainedManifestUrlSuppliesIconRequestContext() {
+        val c = client(Reply("https://site.example/icon", body = byteArrayOf(1)))
+        c.retainManifestSource("https://site.example/manifest.json")
+        assertNotNull(c.fetch(IconCandidate("https://site.example/icon", IconCandidate.Source.MANIFEST)))
+    }
+
     @Test fun sizeAggregateRedirectAndCancellationLimits() {
         val small = NativeDiscoveryClient.Limits(manifestDecodedBytes = 2, iconEncodedBytes = 2,
             attemptBytes = 3, redirects = 0)
@@ -176,6 +195,7 @@ class NativeDiscoveryClientTest {
             Reply("https://site.example/b", body = byteArrayOf(1, 2)), limits = small)
         assertNotNull(c.fetch(IconCandidate("https://site.example/a", IconCandidate.Source.PAGE)))
         assertNull(c.fetch(IconCandidate("https://site.example/b", IconCandidate.Source.PAGE)))
+        assertTrue(c.limitsExceeded)
         assertNull(client(Reply("https://site.example/a", 302,
             headers = mapOf("Location" to listOf("/b"))), limits = small)
             .fetch(IconCandidate("https://site.example/a", IconCandidate.Source.PAGE)))

@@ -93,6 +93,52 @@ class EditorActivityTest {
         await { activity.isFinishing }
     }
 
+    @org.robolectric.annotation.Config(sdk = [28])
+    @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
+    @Test fun existingStoredIconIsPreviewedWithoutStartingDiscovery() {
+        runBlocking { ShellServices.shared(context).profiles.prepareConfiguration() }
+        val icon = SelectedIcon(IconCandidate("https://example.com/favicon.ico",
+            IconCandidate.Source.FAVICON), android.graphics.Bitmap.createBitmap(48, 48,
+                android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(android.graphics.Color.RED) })
+        val reference = IconStore(context).save("preview", icon)
+        runBlocking { repository.add(app("preview", "https://example.com/").copy(iconReference = reference)) }
+        val activity = open("preview")
+        val shown = activity.findViewById<android.widget.ImageView>(R.id.editor_discovery_icon)
+            .drawable as android.graphics.drawable.BitmapDrawable
+        assertEquals(android.graphics.Color.RED, shown.bitmap.getPixel(24, 24))
+        assertEquals("", activity.findViewById<TextView>(R.id.editor_discovery_status).text.toString())
+        IconStore(context).delete("preview")
+    }
+
+    @Test fun completedTitleAndFaviconArePreviewedAndStoredOnSave() {
+        val activity = open()
+        activity.url().setText("example.com")
+        val stages = EditorDiscovery(null, "https://example.com/")
+        stages.document(DiscoveryDocumentResult("https://example.com/page", false))
+        stages.title = "Page title"
+        stages.manifestCompleted(null)
+        stages.icon = SelectedIcon(IconCandidate("https://example.com/favicon.ico",
+            IconCandidate.Source.FAVICON), android.graphics.Bitmap.createBitmap(48, 48,
+                android.graphics.Bitmap.Config.ARGB_8888))
+        EditorActivity::class.java.getDeclaredField("stages").apply { isAccessible = true }
+            .set(activity, stages)
+        EditorActivity::class.java.getDeclaredMethod("updateDiscoveryPreview")
+            .apply { isAccessible = true }.invoke(activity)
+        assertEquals("Page title", activity.name().text.toString())
+        activity.name().setText("My name")
+        val suggestion = activity.findViewById<View>(R.id.editor_suggested_name)
+        assertEquals(View.VISIBLE, suggestion.visibility)
+        suggestion.performClick()
+        assertEquals("Page title", activity.name().text.toString())
+        activity.save()
+        await { saved().size == 1 }
+        val result = saved().single()
+        assertEquals("https://example.com/page", result.launchUrl)
+        assertEquals(NameSource.DISCOVERED, result.nameSource)
+        assertTrue(IconStore(context).exists(result.iconReference!!))
+        IconStore(context).delete(result.id)
+    }
+
     @Test fun httpUrlsFailInlineValidation() {
         val activity = open()
         for (input in listOf("http://localhost:8080", "http://example.com/")) {
