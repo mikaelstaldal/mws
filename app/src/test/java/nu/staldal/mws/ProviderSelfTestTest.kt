@@ -19,6 +19,26 @@ import org.robolectric.annotation.Config
 class ProviderSelfTestTest {
     private val context: Context = RuntimeEnvironment.getApplication()
 
+    @Test fun failedFormFillProbeLeavesIsolationUsable() = runBlocking {
+        val key = ProviderKey("provider", "1.2", 35, "arm64")
+        MaintenanceStore(context).use { store ->
+            val probes = listOf("isolation", "deletion", "formFill").map { feature ->
+                object : ProviderProbe {
+                    override val name = feature
+                    override suspend fun run() = feature != "formFill"
+                }
+            }
+            ProviderSelfTestRunner({ ProviderSnapshot(key, true) }, store, probes).runIfNeeded()
+            val result = SelfTestEncoding.decode(key, store.selfTest())!!
+            assertTrue(result.profileIsolation)
+            assertTrue(result.profileDeletion)
+            assertFalse(result.formFill)
+            val compatibility = ProviderCompatibility({ ProviderSnapshot(key, true) }, { result },
+                floors = mapOf("provider" to listOf(1)))
+            assertTrue(compatibility.current().compatible)
+        }
+    }
+
     @Test fun firstStartAndKeyChangeRunOnceAndLeaveOptionalFeaturesDisabled() = runBlocking {
         val key = ProviderKey("provider", "1.2", 35, "arm64")
         var snapshot = ProviderSnapshot(key, true)

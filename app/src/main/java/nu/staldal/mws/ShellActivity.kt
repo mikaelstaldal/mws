@@ -55,6 +55,7 @@ import kotlinx.coroutines.withContext
  */
 class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     private var holder: ShellHolder? = null
+    internal lateinit var myPass: MyPassClient
     private lateinit var container: FrameLayout
     private var taskDescriptionJob: Job? = null
     private var closing = false
@@ -62,6 +63,8 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        myPass = MyPassClient(this)
+        myPass.restoreIdentity(savedInstanceState)
         val appId = appIdOf(intent)
         if (appId == null) {
             finishAndRemoveTask()
@@ -91,8 +94,14 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
 
     override fun onDestroy() {
         taskDescriptionJob?.cancel()
+        myPass.close()
         holder?.detach(this)
         super.onDestroy()
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        myPass.saveIdentity(outState)
+        super.onSaveInstanceState(outState)
     }
 
     override fun onReady(webView: WebView) {
@@ -248,6 +257,8 @@ class ShellHolder(
     private var lastSafeGet: String? = null
     private var lastCommittedUrl: String? = null
     private val knownSafeGets = mutableSetOf<String>()
+    private var formFill: FormFillEngine? = null
+    private var formClient: MyPassClient? = null
     private var rendererGone = false
     var recovering = false
         private set
@@ -280,6 +291,7 @@ class ShellHolder(
     /** Main thread only. The WebView stays alive for the next activity. */
     fun detach(host: Host) {
         if (this.host !== host) return
+        formFill?.rejectDocument()
         this.host = null
         bound?.webView?.let { (it.parent as? ViewGroup)?.removeView(it) }
         context.baseContext = application
@@ -340,9 +352,31 @@ class ShellHolder(
         applyThirdPartyCookies(app.allowThirdPartyCookies)
         if (closed != null) return
         ready = true
+        installFormFill(webView)
         installClient(webView)
         host?.onReady(webView)
         load(webView, app.launchUrl, initial = true)
+    }
+
+    private fun installFormFill(webView: WebView) {
+        formFill?.close()
+        formFill = FormFillEngine(webView,
+            { services.compatibility.current().features.formFill && closed == null && error == null },
+            { document, callback ->
+                val client = (host as? ShellActivity)?.myPass
+                formClient = client
+                if (client == null) callback(MyPassClient.Outcome.Unavailable) else {
+                    val identity = MyPassClient.Identity(appId, document.epoch, document.nonce)
+                    val launched = client.fetch(identity, document.url, isCurrent = { formFill?.isCurrent(document) == true }) { outcome ->
+                        try { callback(outcome) } finally { formClient = null }
+                    }
+                    if (!launched && formFill?.isCurrent(document) == true) {
+                        formClient = null
+                        callback(MyPassClient.Outcome.NoCredential)
+                    }
+                }
+            },
+            { formClient?.cancel(); formClient = null })
     }
 
     /** Before attachment, the attach result decides; afterwards a stale record closes the shell. */
@@ -379,6 +413,8 @@ class ShellHolder(
 
     private fun release() {
         val attached = bound ?: return
+        formFill?.close()
+        formFill = null
         bound = null
         (attached.webView.parent as? ViewGroup)?.removeView(attached.webView)
         services.profiles.release(attached)
@@ -439,6 +475,7 @@ class ShellHolder(
         timerPaused = false
         host?.onPresentationChanged()
         if (initial) startTimer(navigationIdentity)
+        formFill?.navigate(url)
         webView.loadUrl(url)
     }
 
@@ -446,6 +483,7 @@ class ShellHolder(
         webView.webViewClient = ShellWebViewClient(
             onRequest = { url, get ->
                 if (bound?.webView === webView) {
+                    formFill?.navigate(url)
                     currentUrl = url
                     currentGet = get
                     requestObserved = true
@@ -453,6 +491,7 @@ class ShellHolder(
             },
             onStarted = { url ->
                 if (bound?.webView === webView && error == null) {
+                    formFill?.started(url)
                     if (!requestObserved && !initialNavigation) currentGet = false
                     currentUrl = url
                     requestObserved = false
@@ -464,6 +503,7 @@ class ShellHolder(
                     initialNavigation = false
                     loading = false
                     if (url.startsWith("https://", true)) {
+                        if (url == currentUrl && webView.url == url) formFill?.commit(url)
                         lastCommittedUrl = url
                         if (currentGet) knownSafeGets += url
                         if (url in knownSafeGets) lastSafeGet = url
@@ -474,7 +514,10 @@ class ShellHolder(
             },
             onFailure = { message -> if (bound?.webView === webView) fail(message) },
             onTlsFailure = { url ->
-                if (bound?.webView === webView && url == currentUrl) fail(R.string.shell_tls_error)
+                if (bound?.webView === webView) {
+                    formFill?.rejectDocument()
+                    if (url == currentUrl) fail(R.string.shell_tls_error)
+                }
             },
             onRendererGone = { rendererFailed(webView) },
         )
@@ -482,6 +525,7 @@ class ShellHolder(
 
     private fun fail(message: Int) {
         if (closed != null || error != null) return
+        formFill?.rejectDocument()
         stopTimer()
         loading = false
         failedUrl = currentUrl
@@ -534,6 +578,8 @@ class ShellHolder(
                         services.profiles.release(replacement)
                         return@launch
                     }
+                    formFill?.close()
+                    formFill = null
                     bound = replacement
                     old?.let {
                         (it.webView.parent as? ViewGroup)?.removeView(it.webView)
@@ -542,6 +588,7 @@ class ShellHolder(
                     ShellWebSettings.apply(replacement.webView, BuildConfig.DEBUG)
                     appliedThirdPartyCookies = null
                     applyThirdPartyCookies(record!!.allowThirdPartyCookies)
+                    installFormFill(replacement.webView)
                     installClient(replacement.webView)
                     host?.onReady(replacement.webView)
                     load(replacement.webView, target, initial = true)
@@ -567,6 +614,8 @@ class ShellHolder(
         if (bound?.webView !== webView || closed != null) return true
         stopTimer()
         loading = false
+        formFill?.close()
+        formFill = null
         rendererGone = true
         error = R.string.shell_renderer_error
         (webView.parent as? ViewGroup)?.removeView(webView)

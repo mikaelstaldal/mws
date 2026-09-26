@@ -13,6 +13,12 @@ import org.junit.runner.RunWith
 /** Exercises the production probes against the installed WebView with network loads blocked. */
 @RunWith(AndroidJUnit4::class)
 class RuntimeSelfTestInstrumentedTest {
+    @Test fun formFillProbePassesWithoutNetwork() = runBlocking {
+        assumeTrue("MULTI_PROFILE", WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        assertTrue("FormFillProbe", FormFillProbe(context, ShellServices.shared(context).profiles).run())
+    }
+
     @Test fun isolationAndDeletionProbesPassWithoutNetwork() = runBlocking {
         assumeTrue("MULTI_PROFILE", WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
         val context = InstrumentationRegistry.getInstrumentation().targetContext

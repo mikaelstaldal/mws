@@ -338,7 +338,10 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
   6. The bootstrap fills only the selected fields, dispatches input/change events, clears its references and tears itself down.
 - The nonce is invalidated on completion, timeout, navigation, error or close. The listener is removed when the WebView closes.
 - No general-purpose JS-to-native bridge (`addJavascriptInterface`) is used. Any future bridge must be narrowly scoped, origin-checked and separately threat-modeled.
-- Enabled only when the self-test form-fill probe passed.
+- Enabled only when the self-test form-fill probe passed. `FormFillProbe` uses a network-blocked synthetic HTTPS page, the production helper and transport, and non-secret markers to verify one reply, input/change events and no submission. Optional form-fill timeouts or transport errors yield a failed feature flag while retaining isolation results. Replacement WebViews after Retry receive a new engine before loading. Same-document history changes keep the committed lookup URL and document nonce; the helper rechecks the exact origin. Suite revision 4 invalidates older cached results.
+- Origin rules use the exact HTTPS navigation origin (including non-default ports), following AndroidX’s [supported origin-rule syntax](https://developer.android.com/reference/androidx/webkit/WebViewCompat#addWebMessageListener(android.webkit.WebView,java.lang.String,java.util.Set,androidx.webkit.WebViewCompat.WebMessageListener)). A navigation first observed at page-start rotates fail-closed and may lack a bridge in that document; manual entry remains available.
+- `FormFillEngine` rotates the bridge on accepted requests and page-start callbacks, invalidates it on TLS failures (including subresource TLS failures), errors, renderer loss and host detachment, and uses `FormFillState` to consume ready nonces once. MyPass uses the committed URL verbatim with no realm; a missing host or credential leaves manual entry available.
+- Candidate helper tests run with `node --test scripts/tests/form-fill.test.cjs`; Kotlin tests cover the document/origin/nonce gate. Device tests exercise the synthetic provider probe.
 
 ## 13. Widgets
 
