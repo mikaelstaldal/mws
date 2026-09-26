@@ -525,6 +525,252 @@ class ShellActivityTest {
         assertTrue(started.flags and Intent.FLAG_ACTIVITY_NEW_DOCUMENT != 0)
     }
 
+    private fun permissionDialog() = org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.appcompat.app.AlertDialog
+
+    private class CaptureRequest(private val capability: String) : android.webkit.PermissionRequest() {
+        var allowed: Array<out String>? = null
+        var denied = false
+        override fun getOrigin() = Uri.parse("https://example.com")
+        override fun getResources() = arrayOf(capability)
+        override fun grant(resources: Array<out String>) { allowed = resources }
+        override fun deny() { denied = true }
+    }
+
+    @Test fun geolocationPersistsSiteDecisionsButRechecksAndroidPermission() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        awaitWebView(activity)
+        val results = mutableListOf<Boolean>()
+        val callback = android.webkit.GeolocationPermissions.Callback { _, allow, retain ->
+            assertFalse(retain); results += allow
+        }
+        activity.webPermissions.onGeolocationPermissionsShowPrompt("https://example.com", callback)
+        assertTrue(permissionDialog().findViewById<android.widget.TextView>(android.R.id.message)!!
+            .text.contains("https://example.com"))
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick().also { ShadowLooper.idleMainLooper() }
+        assertEquals(listOf(false), results)
+        activity.webPermissions.onGeolocationPermissionsShowPrompt("https://example.com", callback)
+        assertEquals(listOf(false, false), results)
+        assertEquals(SiteDecision.SITE_DENY, store.permissionDecision(app.id, app.profileGeneration,
+            "https://example.com", PermissionCapability.GEOLOCATION)?.decision)
+        store.deletePermissionDecisions(app.id, app.profileGeneration)
+        Shadows.shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        activity.webPermissions.onGeolocationPermissionsShowPrompt("https://example.com", callback)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick().also { ShadowLooper.idleMainLooper() }
+        assertEquals(true, results.last())
+        activity.webPermissions.onGeolocationPermissionsShowPrompt("https://example.com", callback)
+        assertEquals(4, results.size)
+        Shadows.shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        context.getSharedPreferences("android_permission_denials", 0).edit()
+            .putBoolean(android.Manifest.permission.ACCESS_FINE_LOCATION, true)
+            .putBoolean(android.Manifest.permission.ACCESS_COARSE_LOCATION, true).commit()
+        activity.webPermissions.onGeolocationPermissionsShowPrompt("https://example.com", callback)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick().also { ShadowLooper.idleMainLooper() }
+        assertEquals(false, results.last())
+        assertEquals(SiteDecision.SITE_ALLOW, store.permissionDecision(app.id, app.profileGeneration,
+            "https://example.com", PermissionCapability.GEOLOCATION)?.decision)
+        // Clearing site state leaves the Android grant intact.
+        Shadows.shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.ACCESS_COARSE_LOCATION)
+        store.deletePermissionDecisions(app.id, app.profileGeneration)
+        assertEquals(android.content.pm.PackageManager.PERMISSION_GRANTED,
+            androidx.core.content.ContextCompat.checkSelfPermission(activity, android.Manifest.permission.ACCESS_COARSE_LOCATION))
+        assertNull(store.permissionDecision(app.id, app.profileGeneration, "https://example.com", PermissionCapability.GEOLOCATION))
+    }
+
+    @Test fun cameraPromptsEveryUseSerializesAndCancelsPendingRequests() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        awaitWebView(activity)
+        Shadows.shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.CAMERA)
+        val first = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+        val second = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(first)
+        val firstDialog = permissionDialog()
+        activity.webPermissions.onPermissionRequest(second)
+        assertSame(firstDialog, permissionDialog())
+        firstDialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick().also { ShadowLooper.idleMainLooper() }
+        assertNotNull(first.allowed)
+        assertNotSame(firstDialog, permissionDialog())
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick().also { ShadowLooper.idleMainLooper() }
+        assertTrue(second.denied)
+        val third = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(third)
+        activity.webPermissions.close()
+        assertTrue(third.denied)
+        val unknown = CaptureRequest("notifications")
+        activity.webPermissions.onPermissionRequest(unknown)
+        assertTrue(unknown.denied)
+    }
+
+    @Test fun fileChooserRequiresNativeGestureAndRejectsLateResultsAfterCancellation() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val chooser = object : android.webkit.WebChromeClient.FileChooserParams() {
+            override fun getMode() = MODE_OPEN_MULTIPLE
+            override fun getAcceptTypes() = arrayOf("image/png", "image/jpeg")
+            override fun isCaptureEnabled() = false
+            override fun getTitle(): CharSequence? = null
+            override fun getFilenameHint(): String? = null
+            override fun createIntent() = Intent(Intent.ACTION_GET_CONTENT)
+        }
+        val results = mutableListOf<Array<Uri>?>()
+        activity.webPermissions.onShowFileChooser(view, { results += it }, chooser)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick().also { ShadowLooper.idleMainLooper() }
+        val launched = Shadows.shadowOf(activity).nextStartedActivityForResult
+        assertEquals(Intent.ACTION_OPEN_DOCUMENT, launched.intent.action)
+        assertTrue(launched.intent.getBooleanExtra(Intent.EXTRA_ALLOW_MULTIPLE, false))
+        activity.webPermissions.close()
+        assertEquals(1, results.size)
+        assertNull(results.single())
+        activity.activityResultRegistry.dispatchResult(launched.requestCode, android.app.Activity.RESULT_OK,
+            Intent().setData(Uri.parse("content://documents/example")))
+        assertEquals(1, results.size)
+    }
+
+    @Test fun microphoneRuntimeDenialDoesNotPersistSiteGrant() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        awaitWebView(activity)
+        Shadows.shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.RECORD_AUDIO)
+        context.getSharedPreferences("android_permission_denials", 0).edit().clear().commit()
+        val request = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(request)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick().also { ShadowLooper.idleMainLooper() }
+        val launched = Shadows.shadowOf(activity).nextStartedActivityForResult
+        activity.activityResultRegistry.dispatchResult(launched.requestCode, android.app.Activity.RESULT_OK,
+            Intent().putExtra(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions.EXTRA_PERMISSIONS,
+                arrayOf(android.Manifest.permission.RECORD_AUDIO))
+                .putExtra(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions.EXTRA_PERMISSION_GRANT_RESULTS,
+                    intArrayOf(android.content.pm.PackageManager.PERMISSION_DENIED)))
+        assertTrue(request.denied)
+        val second = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(second)
+        assertTrue(permissionDialog().isShowing)
+        activity.webPermissions.close()
+    }
+
+    @Test fun cancellationKeepsOtherQueuedCapabilitiesAndDismissalDoesNotRememberDeny() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        awaitWebView(activity)
+        val first = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+        val second = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(first)
+        activity.webPermissions.onPermissionRequest(second)
+        activity.webPermissions.onPermissionRequestCanceled(first)
+        assertFalse(first.denied)
+        assertFalse(second.denied)
+        assertTrue(permissionDialog().isShowing)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick()
+        ShadowLooper.idleMainLooper()
+        assertTrue(second.denied)
+        val results = mutableListOf<Boolean>()
+        activity.webPermissions.onGeolocationPermissionsShowPrompt("https://example.com") { _, allow, _ -> results += allow }
+        permissionDialog().cancel()
+        ShadowLooper.idleMainLooper()
+        assertEquals(listOf(false), results)
+        assertNull(store.permissionDecision(app.id, app.profileGeneration, "https://example.com", PermissionCapability.GEOLOCATION))
+        activity.webPermissions.onGeolocationPermissionsShowPrompt("https://example.com") { _, _, _ -> }
+        val camera = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(camera)
+        activity.webPermissions.onGeolocationPermissionsHidePrompt()
+        assertFalse(camera.denied)
+        assertTrue(permissionDialog().isShowing)
+        activity.webPermissions.close()
+    }
+
+    @Test fun rotationDisposesOldControllerAndIgnoresItsLateRequests() {
+        val app = addApp()
+        val controller = controller(ShellActivity.intent(context, app.id))
+        val activity = controller.get()
+        val view = awaitWebView(activity)
+        val old = activity.webPermissions
+        val pending = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+        old.onPermissionRequest(pending)
+        controller.recreate()
+        assertTrue(pending.denied)
+        assertSame(view, awaitWebView(controller.get()))
+        val stale = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+        old.onPermissionRequest(stale)
+        assertTrue(stale.denied)
+        val results = mutableListOf<Boolean>()
+        old.onGeolocationPermissionsShowPrompt("https://example.com") { _, allow, _ -> results += allow }
+        assertEquals(listOf(false), results)
+        assertSame(controller.get().webPermissions, Shadows.shadowOf(view).webChromeClient)
+    }
+
+    @Test fun rotationIgnoresOldRuntimeResultAndResumesQueue() {
+        val app = addApp()
+        val controller = controller(ShellActivity.intent(context, app.id))
+        val activity = controller.get()
+        awaitWebView(activity)
+        context.getSharedPreferences("android_permission_denials", 0).edit().clear().commit()
+        Shadows.shadowOf(context as android.app.Application).denyPermissions(android.Manifest.permission.RECORD_AUDIO)
+        val old = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(old)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        ShadowLooper.idleMainLooper()
+        val launched = Shadows.shadowOf(activity).nextStartedActivityForResult
+        controller.recreate()
+        val recreated = controller.get()
+        assertTrue(old.denied)
+        val camera = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+        recreated.webPermissions.onPermissionRequest(camera)
+        assertNull(camera.allowed)
+        recreated.activityResultRegistry.dispatchResult(launched.requestCode, android.app.Activity.RESULT_OK,
+            Intent().putExtra(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions.EXTRA_PERMISSIONS,
+                arrayOf(android.Manifest.permission.RECORD_AUDIO))
+                .putExtra(androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions.EXTRA_PERMISSION_GRANT_RESULTS,
+                    intArrayOf(android.content.pm.PackageManager.PERMISSION_GRANTED)))
+        assertNull(old.allowed)
+        assertTrue(permissionDialog().isShowing)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick()
+        ShadowLooper.idleMainLooper()
+        assertTrue(camera.denied)
+    }
+
+    @Test fun navigationAndProfileClearCancelPermissionCallbacks() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val pending = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(pending)
+        Shadows.shadowOf(view).webViewClient.shouldOverrideUrlLoading(view, request("https://example.com/next", "GET"))
+        assertTrue(pending.denied)
+        val next = CaptureRequest(android.webkit.PermissionRequest.RESOURCE_AUDIO_CAPTURE)
+        activity.webPermissions.onPermissionRequest(next)
+        assertEquals(ClearResult.Cleared, onMain { services.profiles.clear(app.id) })
+        assertTrue(next.denied)
+        assertTrue(activity.isFinishing)
+    }
+
+    @Test fun combinedCaptureGrantsOnlyApprovedCapabilityAndRejectsInsecureOrigin() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        awaitWebView(activity)
+        Shadows.shadowOf(context as android.app.Application).grantPermissions(android.Manifest.permission.CAMERA)
+        var granted: Array<out String>? = null
+        val combined = object : android.webkit.PermissionRequest() {
+            override fun getOrigin() = Uri.parse("https://other.example:8443")
+            override fun getResources() = arrayOf(RESOURCE_VIDEO_CAPTURE, RESOURCE_AUDIO_CAPTURE)
+            override fun grant(resources: Array<out String>) { granted = resources }
+            override fun deny() { fail("Approved camera should still be granted") }
+        }
+        activity.webPermissions.onPermissionRequest(combined)
+        assertTrue(permissionDialog().findViewById<android.widget.TextView>(android.R.id.message)!!.text.contains("https://other.example:8443"))
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        ShadowLooper.idleMainLooper()
+        assertNull(granted)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick()
+        ShadowLooper.idleMainLooper()
+        assertArrayEquals(arrayOf(android.webkit.PermissionRequest.RESOURCE_VIDEO_CAPTURE), granted)
+        var allowed: Boolean? = null
+        activity.webPermissions.onGeolocationPermissionsShowPrompt("http://example.com") { _, allow, _ -> allowed = allow }
+        assertEquals(false, allowed)
+    }
+
     private fun addApp(generation: Long = 0, themeColor: Int? = null): ConfiguredApp {
         val app = ConfiguredApp(java.util.UUID.randomUUID().toString(), "App", NameSource.DISCOVERED,
             "https://example.com/", null, "https://example.com/start", "https://example.com/",

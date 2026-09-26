@@ -269,7 +269,7 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 - Geolocation, camera and microphone need an exact-origin in-app confirmation first, then the Android runtime permission if needed.
   - A geolocation decision (allow/deny) is remembered per exact origin, per app, until the app's web data is cleared. A remembered deny is applied silently. A remembered allow proceeds to the Android permission check. If the Android permission is permanently denied, the request is denied with a shortcut to the Android app settings.
   - Camera and microphone are asked every time. Concurrent requests for the same origin and capability are serialized.
-  - File selection uses the Android document chooser and needs a user gesture every time.
+  - File selection uses the Android document chooser and needs a fresh tap on a native confirmation showing the page’s origin every time.
 - Mixed active content is blocked. Safe Browsing is on where supported. WebView debugging is off in production builds.
 - Downloads (including `blob:` and `data:`) are unsupported: a non-fatal message is shown, the page stays, and nothing is handed to another app.
 

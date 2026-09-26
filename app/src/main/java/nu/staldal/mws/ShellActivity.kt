@@ -55,6 +55,7 @@ import kotlinx.coroutines.withContext
  */
 class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     private var holder: ShellHolder? = null
+    internal lateinit var webPermissions: WebPermissions
     internal lateinit var myPass: MyPassClient
     private lateinit var container: FrameLayout
     private var taskDescriptionJob: Job? = null
@@ -63,6 +64,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        webPermissions = WebPermissions(this, savedInstanceState) { holder?.record }
         myPass = MyPassClient(this)
         myPass.restoreIdentity(savedInstanceState)
         val appId = appIdOf(intent)
@@ -94,12 +96,14 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
 
     override fun onDestroy() {
         taskDescriptionJob?.cancel()
+        webPermissions.dispose()
         myPass.close()
         holder?.detach(this)
         super.onDestroy()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
+        webPermissions.saveState(outState)
         myPass.saveIdentity(outState)
         super.onSaveInstanceState(outState)
     }
@@ -108,6 +112,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         (webView.parent as? ViewGroup)?.removeView(webView)
         container.removeAllViews()
         overlay = null
+        webView.webChromeClient = webPermissions
         container.addView(webView, FrameLayout.LayoutParams(-1, -1))
         renderOverlay()
     }
@@ -291,6 +296,8 @@ class ShellHolder(
     /** Main thread only. The WebView stays alive for the next activity. */
     fun detach(host: Host) {
         if (this.host !== host) return
+        (host as? ShellActivity)?.webPermissions?.close()
+        bound?.webView?.webChromeClient = ShellChromeClient()
         formFill?.rejectDocument()
         this.host = null
         bound?.webView?.let { (it.parent as? ViewGroup)?.removeView(it) }
@@ -413,6 +420,7 @@ class ShellHolder(
 
     private fun release() {
         val attached = bound ?: return
+        (host as? ShellActivity)?.webPermissions?.close()
         formFill?.close()
         formFill = null
         bound = null
@@ -483,6 +491,7 @@ class ShellHolder(
         webView.webViewClient = ShellWebViewClient(
             onRequest = { url, get ->
                 if (bound?.webView === webView) {
+                    (host as? ShellActivity)?.webPermissions?.close()
                     formFill?.navigate(url)
                     currentUrl = url
                     currentGet = get
@@ -491,6 +500,7 @@ class ShellHolder(
             },
             onStarted = { url ->
                 if (bound?.webView === webView && error == null) {
+                    (host as? ShellActivity)?.webPermissions?.close()
                     formFill?.started(url)
                     if (!requestObserved && !initialNavigation) currentGet = false
                     currentUrl = url
@@ -525,6 +535,7 @@ class ShellHolder(
 
     private fun fail(message: Int) {
         if (closed != null || error != null) return
+        (host as? ShellActivity)?.webPermissions?.close()
         formFill?.rejectDocument()
         stopTimer()
         loading = false
@@ -692,6 +703,10 @@ private class ShellWebViewClient(
             onRequest(request.url.toString(), request.method == "GET")
             onFailure(R.string.shell_load_error)
         }
+    }
+
+    override fun onReceivedClientCertRequest(view: WebView, request: android.webkit.ClientCertRequest) {
+        request.cancel()
     }
 
     override fun onReceivedSslError(view: WebView, handler: SslErrorHandler, error: SslError?) {

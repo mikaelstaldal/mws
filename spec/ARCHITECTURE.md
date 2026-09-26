@@ -301,6 +301,8 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 - Camera and microphone are prompted per request and serialized per origin and capability.
 - `onShowFileChooser` uses the document chooser (`ACTION_OPEN_DOCUMENT`) and needs a gesture each time.
 - Notifications and client-certificate requests are denied promptly.
+- The activity owns pending callbacks; navigation, rotation, profile retirement and destruction cancel them. Late external results cannot grant a canceled request. Native dialogs and runtime requests are serialized across all origins and capabilities.
+- The chooser callback has no trustworthy gesture flag; a fresh native confirmation tap is required before each document chooser launch. Only returned content URIs are accepted. The confirmation identifies the top-level page origin and explains that embedded frames may receive the files; the callback does not expose the requesting frame origin.
 
 ## 10. MyPass integration
 

@@ -1,4 +1,16 @@
 <resources>
+    <string name="web_permission_title">Site permission</string>
+    <string name="web_permission_question">Allow %1$s to use %2$s?</string>
+    <string name="web_permission_allow">Allow</string>
+    <string name="web_permission_deny">Deny</string>
+    <string name="web_permission_location">location</string>
+    <string name="web_permission_camera">camera</string>
+    <string name="web_permission_microphone">microphone</string>
+    <string name="web_files_question">Select files for the page at %1$s? Embedded frames on this page may receive the selected files.</string>
+    <string name="web_permission_files">file selection</string>
+    <string name="web_permission_android_denied">Android permission denied</string>
+    <string name="web_permission_settings_explanation">Enable the permission in Android app settings to allow this site capability.</string>
+    <string name="web_permission_settings">Settings</string>
     <string name="app_name">Mobile Web Shell</string>
     <string name="widget_empty">No apps to show. Tap to open Mobile Web Shell.</string>
     <string name="widget_all_apps">All apps</string>
