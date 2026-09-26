@@ -34,6 +34,33 @@ class MainScreenTest {
         repository.ordered().forEach { repository.remove(it.id) }
     }
 
+    @Test fun systemBarsInsetBothListAndFloatingAddButtonWithoutAccumulating() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        val button = activity.findViewById<View>(R.id.add_web_app)
+        val root = button.parent as android.widget.FrameLayout
+        val insets = androidx.core.view.WindowInsetsCompat.Builder()
+            .setInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars(),
+                androidx.core.graphics.Insets.of(0, 24, 0, 48))
+            .setInsets(androidx.core.view.WindowInsetsCompat.Type.displayCutout(),
+                androidx.core.graphics.Insets.of(30, 0, 0, 0)).build()
+        repeat(2) { androidx.core.view.ViewCompat.dispatchApplyWindowInsets(root, insets) }
+        assertEquals(30, root.paddingLeft)
+        assertEquals(24, root.paddingTop)
+        assertEquals(48, root.paddingBottom)
+        root.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(1000, View.MeasureSpec.EXACTLY))
+        root.layout(0, 0, 600, 1000)
+        val margins = button.layoutParams as android.widget.FrameLayout.LayoutParams
+        assertEquals(1000 - 48 - margins.bottomMargin, button.bottom)
+        assertEquals(1000 - 48,
+            activity.findViewById<View>(R.id.app_list_scroll).bottom)
+        androidx.core.view.ViewCompat.dispatchApplyWindowInsets(root,
+            androidx.core.view.WindowInsetsCompat.Builder().build())
+        assertEquals(0, root.paddingBottom)
+        controller.pause().stop().destroy()
+    }
+
     @Test fun emptyStateOffersAddAndFab() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
