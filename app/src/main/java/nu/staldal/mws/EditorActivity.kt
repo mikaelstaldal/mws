@@ -399,9 +399,20 @@ class EditorActivity : AppCompatActivity() {
             }
         }
         column.addView(removeButton)
-        setContentView(ScrollView(this).apply {
+        val scroll = ScrollView(this).apply {
             id = R.id.editor_scroll
             addView(column)
+        }
+        setContentView(android.widget.FrameLayout(this).apply {
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(this) { view, insets ->
+                val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout() or
+                    androidx.core.view.WindowInsetsCompat.Type.ime())
+                // Resize the viewport so ScrollView keeps the focused field above the keyboard.
+                view.setPadding(safe.left, safe.top, safe.right, safe.bottom)
+                insets
+            }
+            addView(scroll)
         })
     }
 

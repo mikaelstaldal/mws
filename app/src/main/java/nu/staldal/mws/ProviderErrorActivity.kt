@@ -39,6 +39,12 @@ class ProviderErrorActivity : AppCompatActivity() {
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 32, 32, 32)
+            androidx.core.view.ViewCompat.setOnApplyWindowInsetsListener(this) { view, insets ->
+                val safe = insets.getInsets(androidx.core.view.WindowInsetsCompat.Type.systemBars() or
+                    androidx.core.view.WindowInsetsCompat.Type.displayCutout())
+                view.setPadding(32 + safe.left, 32 + safe.top, 32 + safe.right, 32 + safe.bottom)
+                insets
+            }
             addView(message)
             addView(settingsButton)
         })
