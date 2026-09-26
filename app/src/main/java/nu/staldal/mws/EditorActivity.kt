@@ -284,6 +284,7 @@ class EditorActivity : AppCompatActivity() {
             helperText = getString(R.string.editor_url_helper)
             addView(urlField)
         }
+        urlField.minHeight = kotlin.math.ceil(48 * density).toInt()
         column.addView(urlLayout)
         nameField = TextInputEditText(this).apply {
             id = R.id.editor_name
@@ -296,6 +297,7 @@ class EditorActivity : AppCompatActivity() {
             hint = getString(R.string.editor_name)
             addView(nameField)
         }
+        nameField.minHeight = kotlin.math.ceil(48 * density).toInt()
         column.addView(nameLayout)
         discoveryStatus = TextView(this).apply { id = R.id.editor_discovery_status; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         column.addView(discoveryStatus)

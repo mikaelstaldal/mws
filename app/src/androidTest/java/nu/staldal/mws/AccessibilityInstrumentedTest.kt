@@ -131,7 +131,7 @@ class AccessibilityInstrumentedTest {
         assumeTrue(snapshot.key != null && snapshot.multiProfile)
         compatible = true
         LocalHttpsServer().use { server ->
-            server.dispatch { MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AT_START) }
+            server.dispatch { MockResponse().setSocketPolicy(okhttp3.mockwebserver.SocketPolicy.DISCONNECT_AFTER_REQUEST) }
             val id = UUID.randomUUID().toString()
             val url = server.url.toString()
             val app = ConfiguredApp(id = id, name = "Accessibility fixture", nameSource = NameSource.USER_EDITED,

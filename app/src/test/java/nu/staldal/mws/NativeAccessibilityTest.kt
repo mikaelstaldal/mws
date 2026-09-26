@@ -24,6 +24,10 @@ class NativeAccessibilityTest {
                 assertEquals(View.ACCESSIBILITY_LIVE_REGION_POLITE,
                     activity.findViewById<View>(id).accessibilityLiveRegion)
             }
+            val minimumTarget = kotlin.math.ceil(48 * activity.resources.displayMetrics.density).toInt()
+            for (id in listOf(R.id.editor_url, R.id.editor_name)) {
+                assertTrue(activity.findViewById<android.widget.TextView>(id).minHeight >= minimumTarget)
+            }
             assertEquals(LinearLayout.VERTICAL,
                 (activity.findViewById<View>(R.id.editor_save).parent as LinearLayout).orientation)
             assertEquals(View.IMPORTANT_FOR_ACCESSIBILITY_NO,
