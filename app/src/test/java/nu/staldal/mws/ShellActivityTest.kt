@@ -345,7 +345,7 @@ class ShellActivityTest {
             request(app.launchUrl, "GET"), null)
         activity.findViewById<Button>(R.id.shell_retry_button).performClick()
         await { activity.findViewById<Button>(R.id.shell_retry_button)?.isEnabled == true &&
-            container(activity).getChildAt(container(activity).childCount - 1).contentDescription ==
+            activity.findViewById<android.widget.TextView>(R.id.shell_error_message)?.text ==
             context.getString(R.string.shell_load_error) }
         assertFalse(activity.isFinishing)
         assertEquals(1, backend.views.size)
@@ -429,7 +429,7 @@ class ShellActivityTest {
         assertFalse(Shadows.shadowOf(handler).wasProceedCalled())
         assertNotNull(activity.findViewById<Button>(R.id.shell_retry_button))
         assertEquals(context.getString(R.string.shell_tls_error),
-            container(activity).getChildAt(container(activity).childCount - 1).contentDescription)
+            activity.findViewById<android.widget.TextView>(R.id.shell_error_message)?.text)
     }
 
     @Test fun subresourceTlsFailureIsCancelledWithoutCoveringThePage() {
@@ -827,7 +827,7 @@ class ShellActivityTest {
         assertTrue(Shadows.shadowOf(view).webViewClient.shouldOverrideUrlLoading(view,
             request("http://example.com/start", "GET", redirect = true, gesture = false)))
         assertEquals(context.getString(R.string.shell_https_required),
-            container(activity).getChildAt(container(activity).childCount - 1).contentDescription)
+            activity.findViewById<android.widget.TextView>(R.id.shell_error_message)?.text)
     }
 
     @Test fun cleartextPostFailureShowsHttpsRequiredAndRetryNeverReplaysIt() {
@@ -838,7 +838,7 @@ class ShellActivityTest {
         client.onPageCommitVisible(view, app.launchUrl)
         client.onReceivedError(view, request("http://example.com/submit", "POST"), null)
         assertEquals(context.getString(R.string.shell_https_required),
-            container(activity).getChildAt(container(activity).childCount - 1).contentDescription)
+            activity.findViewById<android.widget.TextView>(R.id.shell_error_message)?.text)
         activity.findViewById<Button>(R.id.shell_retry_button).performClick()
         assertEquals(app.launchUrl, Shadows.shadowOf(view).lastLoadedUrl)
     }
@@ -1003,7 +1003,7 @@ class ShellActivityTest {
         Shadows.shadowOf(view).downloadListener.onDownloadStart(app.launchUrl, "ua", "attachment",
             "application/octet-stream", 1)
         assertEquals(context.getString(R.string.shell_download_unsupported),
-            container(activity).getChildAt(container(activity).childCount - 1).contentDescription)
+            activity.findViewById<android.widget.TextView>(R.id.shell_error_message)?.text)
         assertNull(Shadows.shadowOf(activity).nextStartedActivity)
     }
 
@@ -1311,7 +1311,7 @@ class ShellActivityTest {
         ReflectionHelpers.getField(ReflectionHelpers.getField<ShellHolder>(activity, "holder"), "basicAuth")
 
     private fun errorText(activity: ShellActivity): CharSequence? =
-        container(activity).getChildAt(container(activity).childCount - 1).contentDescription
+        activity.findViewById<android.widget.TextView>(R.id.shell_error_message)?.text
 
     private fun credential() = Intent()
         .putExtra(MyPassClient.EXTRA_RESULT_USERNAME, "user")

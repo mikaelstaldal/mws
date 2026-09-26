@@ -66,6 +66,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     private lateinit var presentation: ShellPresentation
     private var closing = false
     private var overlay: View? = null
+    private var announcedOverlay: Int? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -146,38 +147,52 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         val owner = holder ?: return
         val error = owner.error
         val view: View = if (error != null) {
-            LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER
-                setBackgroundColor(Color.WHITE)
-                contentDescription = getString(error)
-                addView(TextView(this@ShellActivity).apply {
-                    text = getString(error)
-                    textSize = 18f
+            android.widget.ScrollView(this).apply {
+                isFillViewport = true
+                addView(LinearLayout(this@ShellActivity).apply {
+                    orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
-                    setPadding(24, 24, 24, 24)
-                })
-                addView(Button(this@ShellActivity).apply {
-                    id = R.id.shell_retry_button
-                    setText(R.string.shell_retry)
-                    isEnabled = !owner.recovering
-                    setOnClickListener { owner.retry() }
-                })
-                addView(Button(this@ShellActivity).apply {
-                    id = R.id.shell_close_button
-                    setText(R.string.shell_close)
-                    setOnClickListener { finishAndRemoveTask() }
+                    val surface = android.util.TypedValue()
+                    theme.resolveAttribute(com.google.android.material.R.attr.colorSurface, surface, true)
+                    setBackgroundColor(surface.data)
+                    addView(TextView(this@ShellActivity).apply {
+                        id = R.id.shell_error_message
+                        text = getString(error)
+                        textSize = 18f
+                        gravity = Gravity.CENTER
+                        setPadding(24, 24, 24, 24)
+                    })
+                    addView(Button(this@ShellActivity).apply {
+                        id = R.id.shell_retry_button
+                        setText(R.string.shell_retry)
+                        isEnabled = !owner.recovering
+                        setOnClickListener { owner.retry() }
+                    })
+                    addView(Button(this@ShellActivity).apply {
+                        id = R.id.shell_close_button
+                        setText(R.string.shell_close)
+                        setOnClickListener { finishAndRemoveTask() }
+                    })
                 })
             }
         } else if (owner.loading) {
             FrameLayout(this).apply {
                 contentDescription = getString(R.string.shell_loading)
-                addView(ProgressBar(this@ShellActivity), FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
+                addView(ProgressBar(this@ShellActivity).apply {
+                    importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+                }, FrameLayout.LayoutParams(-2, -2, Gravity.CENTER))
             }
-        } else return
+        } else {
+            announcedOverlay = null
+            return
+        }
         overlay = view
         container.addView(view, FrameLayout.LayoutParams(-1, -1))
-        view.announceForAccessibility(view.contentDescription)
+        val announcement = error ?: R.string.shell_loading
+        if (announcement != announcedOverlay) {
+            announcedOverlay = announcement
+            view.announceForAccessibility(getString(announcement))
+        }
     }
 
     override fun onRecord(app: ConfiguredApp) {

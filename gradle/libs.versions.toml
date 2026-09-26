@@ -7,6 +7,7 @@ material = "1.12.0"
 room = "2.8.5"
 webkit = "1.17.1"
 junit = "4.13.2"
+espresso = "3.6.1"
 testRunner = "1.6.2"
 testExtJunit = "1.2.1"
 okhttp = "4.12.0"
@@ -16,6 +17,8 @@ whatwgUrl = "0.8.8"
 icu4j = "73.2"
 
 [libraries]
+espresso-core = { module = "androidx.test.espresso:espresso-core", version.ref = "espresso" }
+espresso-accessibility = { module = "androidx.test.espresso:espresso-accessibility", version.ref = "espresso" }
 androidx-core = { module = "androidx.core:core-ktx", version.ref = "core" }
 androidx-appcompat = { module = "androidx.appcompat:appcompat", version.ref = "appcompat" }
 material = { module = "com.google.android.material:material", version.ref = "material" }

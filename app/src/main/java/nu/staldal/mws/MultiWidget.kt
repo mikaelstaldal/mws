@@ -184,7 +184,7 @@ class MultiWidgetConfigureActivity : AppCompatActivity() {
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { finish(); return@launch }
             val apps = withContext(Dispatchers.IO) {
-                ConfigurationRepository(ConfigurationDatabase.shared(this@MultiWidgetConfigureActivity)).ordered()
+                ShellServices.shared(this@MultiWidgetConfigureActivity).repository.ordered()
             }
             val prior = withContext(Dispatchers.IO) {
                 MaintenanceStore(this@MultiWidgetConfigureActivity).use { it.widget(id) }
@@ -202,13 +202,15 @@ class MultiWidgetConfigureActivity : AppCompatActivity() {
                 insets
             }
             root.addView(TextView(this@MultiWidgetConfigureActivity).apply {
-                setText(R.string.widget_configure); textSize = 20f
+                setText(R.string.widget_configure); textSize = 20f; ViewCompat.setAccessibilityHeading(this, true)
             })
             val modes = RadioGroup(this@MultiWidgetConfigureActivity)
             val all = RadioButton(this@MultiWidgetConfigureActivity).apply {
+                minHeight = (48 * resources.displayMetrics.density).toInt()
                 setText(R.string.widget_all_apps); this.id = View.generateViewId()
             }
             val subset = RadioButton(this@MultiWidgetConfigureActivity).apply {
+                minHeight = (48 * resources.displayMetrics.density).toInt()
                 setText(R.string.widget_selected_apps); this.id = View.generateViewId()
             }
             modes.addView(all); modes.addView(subset); root.addView(modes)
@@ -217,8 +219,9 @@ class MultiWidgetConfigureActivity : AppCompatActivity() {
             }
             val boxes = apps.map { app ->
                 app.id to CheckBox(this@MultiWidgetConfigureActivity).apply {
+                    minHeight = (48 * resources.displayMetrics.density).toInt()
                     text = if (app.profileState == ProfileState.CLEARING)
-                        "${app.name} — ${getString(R.string.clearing_label)}" else app.name
+                        getString(R.string.widget_app_status, app.name, getString(R.string.clearing_label)) else app.name
                     isEnabled = app.profileState == ProfileState.ACTIVE
                     isChecked = isEnabled && app.id in (prior?.selectedAppIds ?: emptySet())
                     choices.addView(this)
@@ -231,6 +234,7 @@ class MultiWidgetConfigureActivity : AppCompatActivity() {
             root.addView(ScrollView(this@MultiWidgetConfigureActivity).apply { addView(choices) },
                 LinearLayout.LayoutParams(-1, 0, 1f))
             root.addView(Button(this@MultiWidgetConfigureActivity).apply {
+                minHeight = (48 * resources.displayMetrics.density).toInt()
                 setText(R.string.widget_save)
                 setOnClickListener {
                     val selected = if (modes.checkedRadioButtonId == subset.id)

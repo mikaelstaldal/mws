@@ -238,6 +238,8 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    androidTestImplementation(libs.espresso.core)
+    androidTestImplementation(libs.espresso.accessibility)
     androidTestImplementation(libs.test.runner)
     androidTestImplementation(libs.test.ext.junit)
     androidTestImplementation(libs.room.testing)

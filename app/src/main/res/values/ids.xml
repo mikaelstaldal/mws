@@ -39,4 +39,5 @@
     <item name="editor_clear_retry" type="id" />
     <item name="editor_remove" type="id" />
     <item name="editor_maintenance_status" type="id" />
+    <item name="shell_error_message" type="id" />
 </resources>

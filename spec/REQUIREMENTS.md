@@ -354,6 +354,8 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 
 ## 14. Accessibility and localization
 
+Acceptance procedure: `spec/ACCESSIBILITY_ACCEPTANCE.md` (automated native-screen checks and device TalkBack/text-scaling/contrast checks).
+
 - Native screens meet Android accessibility guidance: touch targets, focus order, TalkBack labels, text scaling and contrast.
 - Icons are accompanied by names, and icon-only actions have content descriptions.
 - WebView content stays accessible through standard WebView support.

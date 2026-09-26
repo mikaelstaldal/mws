@@ -22,6 +22,7 @@ class ProviderErrorActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         message = TextView(this).apply {
+            accessibilityLiveRegion = android.view.View.ACCESSIBILITY_LIVE_REGION_POLITE
             id = R.id.provider_error_message
         }
         settingsButton = MaterialButton(this).apply {
@@ -45,7 +46,8 @@ class ProviderErrorActivity : AppCompatActivity() {
                 view.setPadding(32 + safe.left, 32 + safe.top, 32 + safe.right, 32 + safe.bottom)
                 insets
             }
-            addView(message)
+            addView(android.widget.ScrollView(this@ProviderErrorActivity).apply { addView(message) },
+                LinearLayout.LayoutParams(-1, 0, 1f))
             addView(settingsButton)
         })
     }

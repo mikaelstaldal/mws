@@ -249,16 +249,19 @@ class EditorActivity : AppCompatActivity() {
         }
         column.addView(TextView(this).apply {
             setText(if (appId == null) R.string.editor_add_title else R.string.editor_edit_title)
+            androidx.core.view.ViewCompat.setAccessibilityHeading(this, true)
             textSize = 24f
             setPadding(0, 0, 0, dp(12))
         })
         loadError = TextView(this).apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             id = R.id.editor_load_error
             setText(R.string.editor_load_failed)
             visibility = View.GONE
         }
         column.addView(loadError)
         clearingNotice = TextView(this).apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             id = R.id.editor_clearing_notice
             setText(R.string.editor_clearing_notice)
             visibility = View.GONE
@@ -294,11 +297,11 @@ class EditorActivity : AppCompatActivity() {
             addView(nameField)
         }
         column.addView(nameLayout)
-        discoveryStatus = TextView(this).apply { id = R.id.editor_discovery_status }
+        discoveryStatus = TextView(this).apply { id = R.id.editor_discovery_status; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         column.addView(discoveryStatus)
         discoveryUrl = TextView(this)
         column.addView(discoveryUrl)
-        iconPreview = ImageView(this).apply { id = R.id.editor_discovery_icon }
+        iconPreview = ImageView(this).apply { id = R.id.editor_discovery_icon; importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO }
         column.addView(iconPreview, LinearLayout.LayoutParams(dp(48), dp(48)))
         suggestion = MaterialButton(this).apply {
             id = R.id.editor_suggested_name
@@ -344,7 +347,7 @@ class EditorActivity : AppCompatActivity() {
         })
 
         val buttons = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
+            orientation = LinearLayout.VERTICAL
             setPadding(0, dp(16), 0, 0)
         }
         buttons.addView(MaterialButton(this, null,
@@ -359,9 +362,9 @@ class EditorActivity : AppCompatActivity() {
             isEnabled = false
             setOnClickListener { save() }
         }
-        buttons.addView(saveButton, LinearLayout.LayoutParams(-2, -2).apply { marginStart = dp(8) })
+        buttons.addView(saveButton, LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(8) })
         column.addView(buttons)
-        maintenanceStatus = TextView(this).apply { id = R.id.editor_maintenance_status }
+        maintenanceStatus = TextView(this).apply { id = R.id.editor_maintenance_status; accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE }
         column.addView(maintenanceStatus)
         clearButton = MaterialButton(this).apply {
             id = R.id.editor_clear

@@ -110,7 +110,7 @@ class SingleWidgetConfigureActivity : AppCompatActivity() {
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { finish(); return@launch }
             val apps = withContext(Dispatchers.IO) {
-                ConfigurationRepository(ConfigurationDatabase.shared(this@SingleWidgetConfigureActivity)).ordered()
+                ShellServices.shared(this@SingleWidgetConfigureActivity).repository.ordered()
             }
             val prior = savedInstanceState?.getString("selectedAppId") ?: withContext(Dispatchers.IO) {
                 MaintenanceStore(this@SingleWidgetConfigureActivity).use { it.widget(id)?.targetAppId }
@@ -122,13 +122,14 @@ class SingleWidgetConfigureActivity : AppCompatActivity() {
                 view.setPadding(spacing + bars.left, spacing + bars.top, spacing + bars.right, spacing + bars.bottom)
                 insets
             }
-            root.addView(TextView(this@SingleWidgetConfigureActivity).apply { setText(R.string.widget_pick_app); textSize = 20f })
+            root.addView(TextView(this@SingleWidgetConfigureActivity).apply { setText(R.string.widget_pick_app); textSize = 20f; ViewCompat.setAccessibilityHeading(this, true) })
             val choices = RadioGroup(this@SingleWidgetConfigureActivity)
             val buttons = apps.map { app ->
                 app.id to RadioButton(this@SingleWidgetConfigureActivity).apply {
                     this.id = android.view.View.generateViewId()
+                    minHeight = (48 * resources.displayMetrics.density).toInt()
                     text = if (app.profileState == ProfileState.CLEARING)
-                        "${app.name} — ${getString(R.string.widget_maintenance)}" else app.name
+                        getString(R.string.widget_app_status, app.name, getString(R.string.widget_maintenance)) else app.name
                     isEnabled = app.profileState == ProfileState.ACTIVE
                     choices.addView(this)
                     if (isEnabled && app.id == prior) choices.check(this.id)
@@ -136,6 +137,7 @@ class SingleWidgetConfigureActivity : AppCompatActivity() {
             }
             root.addView(ScrollView(this@SingleWidgetConfigureActivity).apply { addView(choices) }, LinearLayout.LayoutParams(-1, 0, 1f))
             val save = Button(this@SingleWidgetConfigureActivity).apply {
+                minHeight = (48 * resources.displayMetrics.density).toInt()
                 setText(R.string.widget_save)
                 isEnabled = choices.checkedRadioButtonId != -1
                 setOnClickListener {
@@ -145,7 +147,7 @@ class SingleWidgetConfigureActivity : AppCompatActivity() {
                         try {
                             withContext(Dispatchers.IO) {
                                 check(id in SingleWidget.installed(this@SingleWidgetConfigureActivity))
-                                val current = ConfigurationRepository(ConfigurationDatabase.shared(this@SingleWidgetConfigureActivity)).ordered()
+                                val current = ShellServices.shared(this@SingleWidgetConfigureActivity).repository.ordered()
                                 check(current.any { it.id == selected && it.profileState == ProfileState.ACTIVE })
                                 MaintenanceStore(this@SingleWidgetConfigureActivity).use {
                                     it.putWidget(WidgetRecord(id, WidgetType.SINGLE_APP, targetAppId = selected))

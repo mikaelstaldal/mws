@@ -127,4 +127,6 @@
     <string name="editor_remove_pending">Local removal complete; web data cleanup pending until restart or WebView compatibility returns.</string>
     <string name="editor_remove_failed">Could not start removal. Try Remove again.</string>
     <string name="editor_remove_native_pending">Removal started; local cleanup is pending and will resume at the next app restart.</string>
+    <string name="drag_handle_symbol" translatable="false">☰</string>
+    <string name="widget_app_status">%1$s — %2$s</string>
 </resources>

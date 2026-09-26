@@ -140,11 +140,12 @@ class MainActivity : AppCompatActivity() {
         root.addView(scroll)
         val heading = TextView(this).apply {
             setText(R.string.app_name)
+            ViewCompat.setAccessibilityHeading(this, true)
             textSize = 24f
             setPadding(0, 0, 0, dp(12))
         }
         column.addView(heading)
-        val controls = LinearLayout(this)
+        val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun button(viewId: Int, label: Int, action: () -> Unit): View =
             com.google.android.material.button.MaterialButton(this).apply {
                 id = viewId
@@ -161,7 +162,8 @@ class MainActivity : AppCompatActivity() {
         cancel = button(R.id.reorder_cancel, R.string.reorder_cancel) { cancelOrder() }
         column.addView(controls)
 
-        compatibilityEntry = TextView(this).apply {
+        compatibilityEntry = com.google.android.material.button.MaterialButton(this).apply {
+            minimumHeight = dp(48)
             id = R.id.provider_error_entry
             setText(R.string.provider_error_entry)
             contentDescription = getString(R.string.provider_error_entry)
@@ -172,11 +174,13 @@ class MainActivity : AppCompatActivity() {
         }
         column.addView(compatibilityEntry)
         progress = TextView(this).apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             setText(R.string.provider_self_test_running)
             visibility = View.GONE
         }
         column.addView(progress)
         listError = TextView(this).apply {
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             id = R.id.list_error
             setText(R.string.list_error)
             visibility = View.GONE
@@ -345,7 +349,7 @@ class MainActivity : AppCompatActivity() {
             id = R.id.app_name_text
             this.text = app.name
             textSize = 17f
-            maxLines = 1
+            maxLines = Int.MAX_VALUE
         })
         text.addView(TextView(this).apply {
             id = R.id.app_url_text
@@ -357,14 +361,17 @@ class MainActivity : AppCompatActivity() {
             id = R.id.clearing_label
             setText(R.string.clearing_label)
         })
+        text.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+        icon.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         row.addView(text, LinearLayout.LayoutParams(0, -2, 1f))
         row.contentDescription = if (clearing) getString(R.string.clearing_row_description, app.name)
             else getString(R.string.app_row_description, app.name, app.launchUrl)
         if (draft != null) {
             row.contentDescription = getString(R.string.reorder_row, app.name)
             val handle = TextView(this).apply {
+                importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
                 id = R.id.drag_handle
-                this.text = "☰"
+                setText(R.string.drag_handle_symbol)
                 textSize = 24f
                 gravity = Gravity.CENTER
                 contentDescription = getString(R.string.drag_app, app.name)
