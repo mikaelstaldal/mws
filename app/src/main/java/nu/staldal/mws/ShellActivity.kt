@@ -59,6 +59,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     internal lateinit var myPass: MyPassClient
     private lateinit var container: FrameLayout
     private var taskDescriptionJob: Job? = null
+    private lateinit var presentation: ShellPresentation
     private var closing = false
     private var overlay: View? = null
 
@@ -74,6 +75,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         }
         container = FrameLayout(this).apply { id = R.id.shell_container }
         setContentView(container)
+        presentation = ShellPresentation(this, container)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
                 if (holder?.dismissError() == true) return
@@ -85,7 +87,8 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         // Saved instance state is ignored: a holder survives only configuration changes, and after
         // process death a fresh holder loads the resolved launch URL (A§9.2).
         holder = ViewModelProvider(this, ShellHolder.Factory(services, appId, applicationContext))
-            .get(ShellHolder::class.java).also { it.attach(this) }
+            .get(ShellHolder::class.java)
+        holder?.attach(this)
         renderOverlay()
     }
 
@@ -112,6 +115,8 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         (webView.parent as? ViewGroup)?.removeView(webView)
         container.removeAllViews()
         overlay = null
+        holder?.record?.let(presentation::apply)
+        if (holder?.hasVisiblePaint != true) webView.setBackgroundColor(presentation.backgroundColor)
         webView.webChromeClient = webPermissions
         container.addView(webView, FrameLayout.LayoutParams(-1, -1))
         renderOverlay()
@@ -160,6 +165,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     }
 
     override fun onRecord(app: ConfiguredApp) {
+        presentation.apply(app)
         taskDescriptionJob?.cancel()
         taskDescriptionJob = lifecycleScope.launch {
             val size = IconPipeline.SIZES.firstOrNull {
@@ -168,7 +174,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
             val icon = withContext(Dispatchers.IO) {
                 ShellServices.shared(this@ShellActivity).icons.load(app.iconReference, size)
             } ?: ShellServices.shared(this@ShellActivity).icons.defaultIcon().toBitmap(size, size)
-            setTaskDescription(taskDescription(app, icon))
+            setTaskDescription(taskDescription(app, icon, presentation.taskColor))
         }
     }
 
@@ -209,11 +215,12 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
             return data.removePrefix("$SCHEME:").takeIf(ProfileNames::isOpaqueId)
         }
 
-        /** The task color must be opaque; presentation rules refine the choice later (A§9.3). */
+        /** Recents uses the same opaque contrast-selected color as the status bar (A§9.3). */
         @Suppress("DEPRECATION")
-        fun taskDescription(app: ConfiguredApp, icon: Bitmap): ActivityManager.TaskDescription =
+        fun taskDescription(app: ConfiguredApp, icon: Bitmap, color: Int =
+            ShellColors.bar(app.themeColor, Color.WHITE, Color.BLACK).color): ActivityManager.TaskDescription =
             ActivityManager.TaskDescription(app.name, icon,
-                app.themeColor?.takeIf { Color.alpha(it) == 0xFF } ?: 0)
+                color)
     }
 }
 
@@ -270,6 +277,9 @@ class ShellHolder(
     var loading = false
         private set
     var error: Int? = null
+        private set
+
+    var hasVisiblePaint = false
         private set
 
     var bound: BoundWebView? = null
@@ -339,6 +349,7 @@ class ShellHolder(
             services.profiles.release(attached)
             return
         }
+        hasVisiblePaint = false
         bound = attached
         val app = try {
             services.repository.get(appId)
@@ -509,6 +520,8 @@ class ShellHolder(
             },
             onCommit = { url ->
                 if (bound?.webView === webView && error == null) {
+                    hasVisiblePaint = true
+                    webView.setBackgroundColor(Color.WHITE)
                     stopTimer()
                     initialNavigation = false
                     loading = false

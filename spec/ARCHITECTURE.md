@@ -273,7 +273,9 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 
 - Edge-to-edge on all API levels with transparent system bars. Content is inset via `WindowInsets`, and the chosen colors are painted behind the bars.
 - The contrast calculation follows R§9.1. `fullscreen` hides only the status bar.
-- `background_color` is the window background before the first visible paint.
+- `ShellPresentation` owns the shell window backdrop and applies system-bar, display-cutout and IME insets to the content container. Native activities do not use it.
+- `ShellColors` composites manifest colors over the active Material surface and chooses WCAG icon contrast; API 26 navigation bars allow only white icons. Recents uses the selected status-bar color.
+- `background_color` is the window and initial WebView background before the first visible paint; the WebView restores its normal white canvas at the first visible commit, including after renderer recovery.
 
 ### 9.4 Navigation policy implementation
 

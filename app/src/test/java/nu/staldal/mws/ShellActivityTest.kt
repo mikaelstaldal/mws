@@ -74,6 +74,23 @@ class ShellActivityTest {
         store.close()
     }
 
+    @Test fun manifestBackgroundIsOnlyUsedBeforeVisiblePaintAndNotOnReattach() {
+        val app = addApp(backgroundColor = android.graphics.Color.RED)
+        val controller = controller(ShellActivity.intent(context, app.id))
+        val activity = controller.get()
+        val webView = awaitWebView(activity)
+        assertEquals(android.graphics.Color.RED,
+            webView.canvasColor)
+        Shadows.shadowOf(webView).webViewClient.onPageCommitVisible(webView, app.launchUrl)
+        assertEquals(android.graphics.Color.WHITE,
+            webView.canvasColor)
+        controller.configurationChange()
+        val retained = awaitWebView(controller.get())
+        assertSame(webView, retained)
+        assertEquals(android.graphics.Color.WHITE,
+            retained.canvasColor)
+    }
+
     @Test fun launchIntentCarriesOnlyTheAppIdAsDocumentDataUri() {
         val intent = ShellActivity.intent(context, "app_1-A")
         assertEquals(ShellActivity::class.java.name, intent.component?.className)
@@ -771,10 +788,10 @@ class ShellActivityTest {
         assertEquals(false, allowed)
     }
 
-    private fun addApp(generation: Long = 0, themeColor: Int? = null): ConfiguredApp {
+    private fun addApp(generation: Long = 0, themeColor: Int? = null, backgroundColor: Int? = null): ConfiguredApp {
         val app = ConfiguredApp(java.util.UUID.randomUUID().toString(), "App", NameSource.DISCOVERED,
             "https://example.com/", null, "https://example.com/start", "https://example.com/",
-            profileGeneration = generation, themeColor = themeColor, createdAt = 1, updatedAt = 1)
+            profileGeneration = generation, themeColor = themeColor, backgroundColor = backgroundColor, createdAt = 1, updatedAt = 1)
         assertEquals(ConfigurationWriteResult.Success, onMain { repository.add(app) })
         return app
     }
@@ -831,6 +848,11 @@ class ShellActivityTest {
     }
 
     class CountingWebView(context: Context) : WebView(context) {
+        var canvasColor: Int? = null
+        override fun setBackgroundColor(color: Int) {
+            canvasColor = color
+            super.setBackgroundColor(color)
+        }
         var loads = 0
         override fun loadUrl(url: String) {
             loads++

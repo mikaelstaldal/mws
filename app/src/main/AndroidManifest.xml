@@ -36,6 +36,7 @@
         <!-- One document task per app ID data URI (A§9.1); no dynamic task affinities. -->
         <activity
             android:name=".ShellActivity"
+            android:windowSoftInputMode="adjustResize"
             android:autoRemoveFromRecents="true"
             android:documentLaunchMode="intoExisting"
             android:exported="false" />
