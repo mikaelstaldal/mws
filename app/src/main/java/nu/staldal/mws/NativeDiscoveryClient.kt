@@ -222,6 +222,7 @@ class NativeDiscoveryClient(
                         authHeader = null
                     }
                     if (next.origin != doc.origin) corsTainted = true
+                    authHeader = null
                     current = next
                     continue
                 }
@@ -232,7 +233,7 @@ class NativeDiscoveryClient(
                     val pair = realm?.let { basicAuth.credential(current.serialized, it) }
                     if (pair != null) {
                         val token = java.util.Base64.getEncoder().encodeToString(
-                            "${pair.first}:${pair.second}".toByteArray(StandardCharsets.ISO_8859_1))
+                            "${pair.first}:${pair.second}".toByteArray(StandardCharsets.UTF_8))
                         authHeader = "Basic $token"
                         authRetried = true
                         continue

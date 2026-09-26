@@ -122,6 +122,8 @@ class EditorActivity : AppCompatActivity() {
                         discoveryStatus.setText(R.string.editor_discovery_failed)
                     }
                 }
+            }, authEnabled = { ShellServices.shared(this).compatibility.current().features.basicAuth }, myPass = { myPassClient }, onAuthenticationRequired = {
+                discoveryStatus.setText(R.string.editor_discovery_auth_required)
             }, onSnapshot = { attempt, snapshot -> fetchMetadata(attempt, snapshot) })
     }
 
@@ -132,7 +134,7 @@ class EditorActivity : AppCompatActivity() {
         nativeClient?.cancel()
         val document = current.finalUrl ?: current.configuredUrl
         val client = NativeDiscoveryClient(document, UrlPolicy.parseHttps(document)!!.origin,
-            attemptBytes = discoveryBytes)
+            basicAuth = discovery?.basicAuth(attempt.id), attemptBytes = discoveryBytes)
         nativeClient = client
         metadataJob = lifecycleScope.launch {
             if (snapshot != null) current.title = snapshot.title
@@ -168,7 +170,8 @@ class EditorActivity : AppCompatActivity() {
             if (identity != stageIdentity || stages !== current) return@launch
             current.icon = icon ?: current.icon
             updateDiscoveryPreview()
-            discoveryStatus.setText(if (snapshot == null || manifestFailed || icon == null || client.limitsExceeded)
+            discoveryStatus.setText(if (discovery?.authenticationRequired == true) R.string.editor_discovery_auth_required
+                else if (snapshot == null || manifestFailed || icon == null || client.limitsExceeded)
                 R.string.editor_discovery_failed else R.string.editor_discovery_credentialless)
             if (snapshot != null || attempt.documentResult?.failure != null) discovery?.finish(attempt.id)
         }

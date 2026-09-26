@@ -110,6 +110,18 @@ class NativeDiscoveryClientTest {
         assertTrue(second.request["Authorization"]!!.startsWith("Basic "))
     }
 
+    @Test fun basicCredentialIsNotSentProactivelyToSameOriginRedirectTarget() {
+        val first = Reply("https://site.example/a", 401,
+            headers = mapOf("WWW-Authenticate" to listOf("Basic realm=\"private\"")))
+        val retry = Reply("https://site.example/a", 302,
+            headers = mapOf("Location" to listOf("/b")))
+        val target = Reply("https://site.example/b")
+        val c = client(first, retry, target, auth = DiscoveryBasicAuth { _, _ -> "user" to "pass" })
+        assertNotNull(c.fetch(IconCandidate("https://site.example/a", IconCandidate.Source.PAGE)))
+        assertTrue(retry.request["Authorization"]!!.startsWith("Basic "))
+        assertTrue(target.request["Authorization"].isNullOrEmpty())
+    }
+
     @Test fun verifiedFullContextCookiesFollowCredentialsMode() {
         val cross = "https://other.example/m"
         val received = mutableListOf<DiscoveryCookieContext>()

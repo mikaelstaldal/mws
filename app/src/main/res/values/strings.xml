@@ -129,4 +129,5 @@
     <string name="editor_remove_native_pending">Removal started; local cleanup is pending and will resume at the next app restart.</string>
     <string name="drag_handle_symbol" translatable="false">☰</string>
     <string name="widget_app_status">%1$s — %2$s</string>
+    <string name="editor_discovery_auth_required">Authentication required – select Refresh site details.</string>
 </resources>

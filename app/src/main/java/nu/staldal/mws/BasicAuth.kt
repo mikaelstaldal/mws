@@ -169,6 +169,7 @@ internal class ShellBasicAuth(
     private val onLookupEnded: () -> Unit,
     /** Shows a non-sensitive error for the current navigation. */
     private val onError: (Int) -> Unit,
+    private val onCredential: (BasicAuthGate.Challenge.Lookup, MyPassClient.Outcome.Credential) -> Unit = { _, _ -> },
 ) {
     val gate = BasicAuthGate()
     private val main = Handler(Looper.getMainLooper())
@@ -240,6 +241,7 @@ internal class ShellBasicAuth(
         pending = null
         onLookupEnded()
         if (outcome is MyPassClient.Outcome.Credential && enabled() && gate.supply(request.lookup)) {
+            onCredential(request.lookup, outcome)
             request.answer.proceed(String(outcome.username), String(outcome.password))
             return
         }

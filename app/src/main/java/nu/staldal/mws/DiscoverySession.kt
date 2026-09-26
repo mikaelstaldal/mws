@@ -9,6 +9,8 @@ import android.os.SystemClock
 import android.view.View
 import android.view.ViewGroup
 import android.view.ViewTreeObserver
+import android.webkit.HttpAuthHandler
+import android.webkit.WebResourceResponse
 import android.webkit.RenderProcessGoneDetail
 import android.webkit.SslErrorHandler
 import android.webkit.WebResourceError
@@ -42,6 +44,9 @@ class DiscoverySession(
     private val onDocument: (DiscoveryAttempt, DiscoveryDocumentResult) -> Unit,
     private val onOverallTimeout: (DiscoveryAttempt) -> Unit,
     private val onBlocked: (AttachBlock?) -> Unit,
+    private val authEnabled: () -> Boolean = { false },
+    private val myPass: () -> MyPassClient? = { null },
+    private val onAuthenticationRequired: () -> Unit = {},
     private val onSnapshot: (DiscoveryAttempt, DiscoveryDomSnapshot) -> Unit = { _, _ -> },
 ) {
     private val handler = Handler(Looper.getMainLooper())
@@ -51,6 +56,11 @@ class DiscoverySession(
     private var bound: BoundWebView? = null
     private var progress: View? = null
     private var attempt: DiscoveryAttempt? = null
+    @Volatile private var authentication: DiscoveryBasicAuthentication? = null
+    fun basicAuth(id: Long): DiscoveryBasicAuth? = authentication?.takeIf { attempt?.id == id }
+
+    var authenticationRequired = false
+        private set
     private var activeUrl: String? = null
     private var generation = 0L
     private var launch: Job? = null
@@ -73,7 +83,7 @@ class DiscoverySession(
     fun focusLost(text: String) {
         debounce?.cancel()
         UrlPolicy.normalizeUserInput(text)?.let { url ->
-            if (activeUrl != url.serialized) {
+            if (activeUrl != url.serialized || authenticationRequired) {
                 start(url, DiscoveryTrigger.FOCUS_LOSS)
             }
         }
@@ -102,6 +112,8 @@ class DiscoverySession(
     /** Called after the editor has finished later discovery stages. */
     fun finish(id: Long) {
         if (attempt?.id != id) return
+        authentication?.close()
+        authentication = null
         attempt?.finish()
         handler.removeCallbacks(timer)
         detach()
@@ -163,6 +175,11 @@ class DiscoverySession(
                 if (id != generation || closed) return@launch
                 val state = DiscoveryAttempt(id, url, trigger)
                 attempt = state
+                authentication = DiscoveryBasicAuthentication(state, myPass,
+                    { pauseForMyPass(id) }, { resumeFromMyPass(id) }, {
+                        authenticationRequired = true
+                        onAuthenticationRequired()
+                    }, authEnabled).also { it.arm() }
                 state.start(clock())
                 scheduleTimer()
                 webView.loadUrl(url.serialized)
@@ -190,14 +207,29 @@ class DiscoverySession(
 
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             if (id != generation) return true
-            if (UrlPolicy.parseHttps(request.url.toString()) != null) return false
+            if (UrlPolicy.parseHttps(request.url.toString()) != null) {
+                if (request.isForMainFrame) authentication?.redirect(request.url.toString())
+                return false
+            }
             if (request.isForMainFrame) failDocument(id, DiscoveryDocumentFailure.HTTPS_REQUIRED)
             return true
+        }
+
+        override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
+            if (id == generation) authentication?.intercepted(request.url.toString())
+            return null
+        }
+
+        override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler,
+            host: String?, realm: String?) {
+            val auth = authentication?.takeIf { id == generation }
+            if (auth == null) handler.cancel() else auth.challenge(handler.asAnswer(), host, realm)
         }
 
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             identity.started()
             mainFrameUrl = url
+            if (id == generation) authentication?.redirect(url)
             if (id == generation && UrlPolicy.parseHttps(url) == null)
                 failDocument(id, DiscoveryDocumentFailure.HTTPS_REQUIRED)
         }
@@ -205,6 +237,7 @@ class DiscoverySession(
         override fun onPageCommitVisible(view: WebView, url: String) {
             val state = attempt?.takeIf { it.id == id } ?: return
             if (state.commit(url)) {
+                authentication?.documentEnded()
                 val document = identity.request()
                 onDocument(state, checkNotNull(state.documentResult))
                 if (document != null && state.documentResult?.finalUrl != null) extract(view, state, document)
@@ -252,6 +285,7 @@ class DiscoverySession(
         failure: DiscoveryDocumentFailure = DiscoveryDocumentFailure.LOAD_ERROR) {
         val state = attempt?.takeIf { it.id == id } ?: return
         if (state.failDocument(failure)) {
+            authentication?.documentEnded()
             bound?.webView?.stopLoading()
             onDocument(state, checkNotNull(state.documentResult))
             scheduleTimer()
@@ -264,6 +298,8 @@ class DiscoverySession(
         if ((state.remainingOverall(now) ?: Long.MAX_VALUE) <= 0) {
             if (state.documentResult == null) failDocument(state.id, DiscoveryDocumentFailure.TIMEOUT)
             bound?.webView?.stopLoading()
+            authentication?.close()
+            authentication = null
             state.finish()
             detach()
             onOverallTimeout(state)
@@ -284,6 +320,9 @@ class DiscoverySession(
     }
 
     private fun invalidate() {
+        authentication?.close()
+        authentication = null
+        authenticationRequired = false
         generation++
         debounce?.cancel()
         // A creation call already in progress must finish so its profile and WebView stay owned.
