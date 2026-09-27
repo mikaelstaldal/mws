@@ -225,6 +225,7 @@ tasks.withType<Test>().configureEach {
 }
 
 dependencies {
+    implementation(libs.androidx.swiperefreshlayout)
     implementation(libs.androidx.core)
     implementation(libs.androidx.appcompat)
     implementation(libs.material)

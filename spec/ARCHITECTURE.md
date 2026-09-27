@@ -307,7 +307,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 
 - Browser handoff intents carry no headers, referrer extras or profile state. They target the package of the default handler for a bare `https://` browsable intent (declared in `<queries>`), so an app claiming the link cannot receive it; when the default is not among the matching handlers (the system resolver, whatever its package) the user chooses, and when no handler matches a non-fatal "no browser" message is shown. The canonical serialization is handed off.
 - Long-press **Open in browser** uses `WebView.getHitTestResult` / a context menu, for allowed HTTPS URLs only. Only `SRC_ANCHOR_TYPE` is offered: for an image link the hit test exposes the image URL rather than the link, so none is offered.
-- Pull-to-refresh uses a `SwipeRefreshLayout` (or equivalent) that is enabled only when the WebView is at scroll top.
+- Pull-to-refresh wraps the shell content in `SwipeRefreshLayout`; its child-scroll callback blocks the gesture when the WebView can scroll upward or a loading/error/recovery overlay or a navigation in flight is active. Eligibility is latched at touch-down so a drag starting below the top cannot turn into refresh when scrolling reaches the top. Refresh invalidates the form-fill document and arms the Basic-auth gate before calling `WebView.reload()`, retaining WebView history and POST reload semantics without classifying the request as a safe GET. The gesture indicator ends once reload is dispatched.
 - Downloads: the `DownloadListener` shows the unsupported message and never starts an intent. `ShellWebSettings` installs a silent listener before any load so no provider default can delegate.
 
 ### 9.5 Initial-load timer

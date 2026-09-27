@@ -13,6 +13,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.view.ContextMenu
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.GeolocationPermissions
@@ -33,6 +34,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import androidx.activity.OnBackPressedCallback
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.graphics.drawable.toBitmap
@@ -61,6 +63,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     internal lateinit var webPermissions: WebPermissions
     internal lateinit var myPass: MyPassClient
     internal lateinit var handoff: ShellHandoff
+    private lateinit var refresh: SwipeRefreshLayout
     private lateinit var container: FrameLayout
     private var taskDescriptionJob: Job? = null
     private lateinit var presentation: ShellPresentation
@@ -80,7 +83,28 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
             return
         }
         container = FrameLayout(this).apply { id = R.id.shell_container }
-        setContentView(container)
+        refresh = object : SwipeRefreshLayout(this) {
+            private var startedAtTop = false
+            override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    startedAtTop = !canChildScrollUp()
+                }
+                return startedAtTop && super.onInterceptTouchEvent(event)
+            }
+        }.apply {
+            addView(container, ViewGroup.LayoutParams(-1, -1))
+            setOnChildScrollUpCallback { _, _ ->
+                val owner = holder
+                val view = owner?.bound?.webView
+                owner == null || view == null || owner.loading || owner.error != null ||
+                    owner.recovering || owner.navigationInFlight || view.canScrollVertically(-1)
+            }
+            setOnRefreshListener {
+                holder?.reload()
+                isRefreshing = false
+            }
+        }
+        setContentView(refresh)
         presentation = ShellPresentation(this, container)
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
             override fun handleOnBackPressed() {
@@ -343,6 +367,8 @@ class ShellHolder(
     private var rendererGone = false
     var recovering = false
         private set
+    var navigationInFlight = false
+        private set
     var loading = false
         private set
     var error: Int? = null
@@ -557,8 +583,30 @@ class ShellHolder(
         load(webView, url, initial = false)
     }
 
+    /** Explicit user reload: keep WebView reload semantics, including its current history entry. */
+    fun reload() {
+        val webView = bound?.webView ?: return
+        val url = webView.url ?: return
+        if (closed != null || loading || navigationInFlight || error != null || recovering ||
+            webView.canScrollVertically(-1) || UrlPolicy.parseNavigation(url) == null) return
+        navigationIdentity++
+        navigationInFlight = true
+        currentUrl = url
+        // Reload may repeat a POST; never promote it to a safe GET for error recovery.
+        requestObserved = true
+        failedUrl = null
+        failedGet = false
+        initialNavigation = false
+        stopTimer()
+        (host as? ShellActivity)?.webPermissions?.close()
+        formFill?.navigate(url)
+        basicAuth.arm(url)
+        webView.reload()
+    }
+
     private fun load(webView: WebView, url: String, initial: Boolean) {
         navigationIdentity++
+        navigationInFlight = true
         currentUrl = url
         currentGet = true
         requestObserved = true
@@ -593,6 +641,7 @@ class ShellHolder(
             },
             onRequest = { url, get, redirect ->
                 if (bound?.webView === webView) {
+                    navigationInFlight = true
                     if (redirect) basicAuth.redirect(url) else basicAuth.arm(url)
                     (host as? ShellActivity)?.webPermissions?.close()
                     formFill?.navigate(url)
@@ -605,6 +654,7 @@ class ShellHolder(
                 if (bound?.webView === webView) basicAuth.disarm()
                 if (bound?.webView === webView && error == null) {
                     (host as? ShellActivity)?.webPermissions?.close()
+                    navigationInFlight = true
                     formFill?.started(url)
                     initialDocumentStarted = true
                     if (!requestObserved && !initialNavigation) currentGet = false
@@ -620,6 +670,7 @@ class ShellHolder(
                     stopTimer()
                     initialNavigation = false
                     loading = false
+                    navigationInFlight = false
                     if (url.startsWith("https://", true)) {
                         if (url == currentUrl && webView.url == url) formFill?.commit(url)
                         lastCommittedUrl = url
@@ -643,7 +694,12 @@ class ShellHolder(
                     if (url == currentUrl) fail(R.string.shell_tls_error)
                 }
             },
-            onCancelled = { if (bound?.webView === webView) basicAuth.disarm() },
+            onCancelled = {
+                if (bound?.webView === webView) {
+                    navigationInFlight = false
+                    basicAuth.disarm()
+                }
+            },
             onIntercept = basicAuth::intercepted,
             onAuthRequest = { answer, authHost, realm ->
                 if (bound?.webView === webView) basicAuth.challenge(answer, authHost, realm) else answer.cancel()
@@ -671,6 +727,7 @@ class ShellHolder(
         formFill?.rejectDocument()
         stopTimer()
         loading = false
+        navigationInFlight = false
         failedUrl = currentUrl
         failedGet = currentGet
         error = message
@@ -764,6 +821,7 @@ class ShellHolder(
         basicAuth.disarm()
         stopTimer()
         loading = false
+        navigationInFlight = false
         formFill?.close()
         formFill = null
         rendererGone = true

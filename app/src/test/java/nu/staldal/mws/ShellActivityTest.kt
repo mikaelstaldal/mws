@@ -217,6 +217,82 @@ class ShellActivityTest {
         assertEquals(1, services.shellsFor(app.id))
     }
 
+    @Test fun pullToRefreshIsBlockedUntilLoadedAndWheneverPageCanScrollUp() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val refresh = container(activity).parent as androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        assertTrue(refresh.canChildScrollUp())
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        assertFalse(refresh.canChildScrollUp())
+        view.canScrollUp = true
+        assertTrue(refresh.canChildScrollUp())
+        fun intercept(action: Int, y: Float): Boolean {
+            val event = android.view.MotionEvent.obtain(0, 10, action, 100f, y, 0)
+            return try { refresh.onInterceptTouchEvent(event) } finally { event.recycle() }
+        }
+        assertFalse(intercept(android.view.MotionEvent.ACTION_DOWN, 100f))
+        assertFalse(intercept(android.view.MotionEvent.ACTION_MOVE, 400f))
+        view.canScrollUp = false
+        assertFalse(intercept(android.view.MotionEvent.ACTION_MOVE, 500f))
+        view.canScrollUp = true
+        intercept(android.view.MotionEvent.ACTION_UP, 500f)
+        val owner = ReflectionHelpers.getField<ShellHolder>(activity, "holder")
+        owner.reload()
+        assertEquals(0, view.reloads)
+        view.canScrollUp = false
+        assertFalse(refresh.canChildScrollUp())
+        assertFalse(intercept(android.view.MotionEvent.ACTION_DOWN, 100f))
+        assertTrue(intercept(android.view.MotionEvent.ACTION_MOVE, 400f))
+        intercept(android.view.MotionEvent.ACTION_CANCEL, 400f)
+        refresh.isRefreshing = true
+        ReflectionHelpers.getField<androidx.swiperefreshlayout.widget.SwipeRefreshLayout.OnRefreshListener>(
+            refresh, "mListener").onRefresh()
+        assertFalse(refresh.isRefreshing)
+        assertEquals(1, view.reloads)
+        assertEquals(1, view.loads)
+    }
+
+    @Test fun refreshCannotReplaceAnAcceptedNavigationOrRepeatAnInFlightReload() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        val refresh = container(activity).parent as androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        val owner = ReflectionHelpers.getField<ShellHolder>(activity, "holder")
+        assertFalse(client.shouldOverrideUrlLoading(view, request("https://example.com/next", "GET")))
+        assertTrue(refresh.canChildScrollUp())
+        owner.reload()
+        assertEquals(0, view.reloads)
+        client.onPageStarted(view, "https://example.com/next", null)
+        client.onPageCommitVisible(view, "https://example.com/next")
+        assertFalse(refresh.canChildScrollUp())
+        owner.reload()
+        owner.reload()
+        assertEquals(1, view.reloads)
+        assertTrue(refresh.canChildScrollUp())
+    }
+
+    @Test fun explicitReloadPreparesFormFillAndRearmsBasicAuthentication() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onPageStarted(view, app.launchUrl, null)
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        val owner = ReflectionHelpers.getField<ShellHolder>(activity, "holder")
+        val engine = ReflectionHelpers.getField<FormFillEngine>(owner, "formFill")
+        assertFalse(ReflectionHelpers.getField<Boolean>(engine, "prepared"))
+        owner.reload()
+        assertTrue(ReflectionHelpers.getField<Boolean>(engine, "prepared"))
+        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
+        basicAuth(activity).challenge(Answer(), "example.com", "Private")
+        val lookup = Shadows.shadowOf(activity).nextStartedActivityForResult
+        assertEquals(app.launchUrl, lookup.intent.getStringExtra(MyPassClient.EXTRA_URL))
+        assertEquals(1, view.reloads)
+    }
+
     @Test fun recordChangesRefreshRecentsAndThirdPartyCookiesWithoutReload() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))
@@ -1418,6 +1494,13 @@ class ShellActivityTest {
         override fun setBackgroundColor(color: Int) {
             canvasColor = color
             super.setBackgroundColor(color)
+        }
+        var canScrollUp = false
+        override fun canScrollVertically(direction: Int): Boolean = direction < 0 && canScrollUp
+        var reloads = 0
+        override fun reload() {
+            reloads++
+            super.reload()
         }
         var loads = 0
         override fun loadUrl(url: String) {
