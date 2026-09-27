@@ -37,6 +37,13 @@ Existing packaged coverage:
 | Pre-dispatch popup routing | Strict runtime probe and trusted listener with zero destination requests |
 | Attached disposable discovery and superseded callbacks | `DiscoverySessionInstrumentedTest` |
 
+The shell auth tests include isolated iframe/image challenges and an overlapping
+iframe-to-image navigation case. Keep the overlapping case in qualification:
+waiting for the old challenge to finish would hide the provider's missing request
+identity. A lookup for the new page with the old iframe's realm is a failure.
+The cleartext listener counts received bytes separately from accepted TCP
+connections; a speculative connection alone does not establish HTTP transmission.
+
 Before qualification, add device coverage for the remaining cases: gestured
 cleartext popups and external-intent cleartext fallback; discovery cleartext
 redirects; the four native metadata fetch classes' credentialless fallback and

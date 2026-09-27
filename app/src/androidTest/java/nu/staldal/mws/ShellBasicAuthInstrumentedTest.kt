@@ -139,6 +139,27 @@ class ShellBasicAuthInstrumentedTest {
         assertTrue(otherRequests.all { it.second == null })
     }
 
+    @Test fun iframeChallengeIsCancelledWithoutAnotherNavigation() {
+        val (webView, myPass) = openShell()
+        navigate(webView, at("/frame-page"))
+        await("iframe request reaches listener") { requests.any { it.first == "/protected-frame" } }
+        await("iframe fixture completes") { fixtureDocumentReady(webView, at("/frame-page")) }
+        SystemClock.sleep(1500)
+        assertEquals(emptyList<Pair<String, String?>>(), myPass.lookups)
+        assertTrue(requests.all { it.second == null })
+    }
+
+    @Test fun imageChallengeIsCancelledWithoutAnotherNavigation() {
+        val (webView, myPass) = openShell()
+        navigate(webView, at("/image-page"))
+        await("image request reaches listener") { requests.any { it.first == "/protected-image" } }
+        await("image fixture completes") { fixtureDocumentReady(webView, at("/image-page")) }
+        SystemClock.sleep(1500)
+        assertEquals(emptyList<Pair<String, String?>>(), myPass.lookups)
+        assertTrue(requests.all { it.second == null })
+    }
+
+    /** Keep the overlapping case: request arrival is deliberately not challenge completion. */
     @Test fun iframeAndSubresourceChallengesAreCancelled() {
         val (webView, myPass) = openShell()
         navigate(webView, at("/frame-page"))

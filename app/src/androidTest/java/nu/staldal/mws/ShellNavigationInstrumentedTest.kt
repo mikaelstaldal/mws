@@ -22,6 +22,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.InetAddress
 import java.net.ServerSocket
+import java.net.Socket
+import java.net.SocketTimeoutException
+import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
@@ -41,6 +44,9 @@ class ShellNavigationInstrumentedTest {
     private lateinit var server: LocalHttpsServer
     private lateinit var cleartext: ServerSocket
     private val cleartextConnections = AtomicInteger()
+    private val cleartextBytes = AtomicInteger()
+    private val cleartextReadErrors = AtomicInteger()
+    private val cleartextSockets = ConcurrentHashMap.newKeySet<Socket>()
     private val requestedPaths = mutableListOf<String>()
     private var monitor: Instrumentation.ActivityMonitor? = null
     private val apps = mutableListOf<String>()
@@ -53,7 +59,35 @@ class ShellNavigationInstrumentedTest {
         cleartext = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
         thread(isDaemon = true) {
             while (!cleartext.isClosed) {
-                runCatching { cleartext.accept() }.getOrNull()?.use { cleartextConnections.incrementAndGet() }
+                val socket = runCatching { cleartext.accept() }.getOrNull() ?: break
+                cleartextSockets.add(socket)
+                if (cleartext.isClosed) {
+                    socket.close()
+                    cleartextSockets.remove(socket)
+                    break
+                }
+                cleartextConnections.incrementAndGet()
+                // Speculative connections must not block acceptance of a later leaking request.
+                thread(isDaemon = true) {
+                    try {
+                        socket.use {
+                            socket.soTimeout = 2_000
+                            val buffer = ByteArray(4096)
+                            val input = socket.getInputStream()
+                            while (true) {
+                                val count = input.read(buffer)
+                                if (count < 0) break
+                                cleartextBytes.addAndGet(count)
+                            }
+                        }
+                    } catch (_: SocketTimeoutException) {
+                        // An idle connection sent no further bytes during the observation period.
+                    } catch (_: Exception) {
+                        if (!cleartext.isClosed) cleartextReadErrors.incrementAndGet()
+                    } finally {
+                        cleartextSockets.remove(socket)
+                    }
+                }
             }
         }
         val http = "http://127.0.0.1:${cleartext.localPort}/leak"
@@ -99,6 +133,7 @@ class ShellNavigationInstrumentedTest {
         ShellServices.install(null)
         server.close()
         cleartext.close()
+        cleartextSockets.forEach { runCatching { it.close() } }
         database.close()
         store.close()
     }
@@ -113,8 +148,10 @@ class ShellNavigationInstrumentedTest {
             if (onMain { webView.url } != page) onMain { webView.loadUrl(page) }
             await("fixture ready after reset: $page") { fixtureDocumentReady(webView, page) }
             evaluate(webView, script)
-            SystemClock.sleep(1500)
-            assertEquals(script, 0, cleartextConnections.get())
+            SystemClock.sleep(3_000)
+            assertEquals("$script; listener read errors", 0, cleartextReadErrors.get())
+            assertEquals("$script; connections=${cleartextConnections.get()}; " +
+                "page=${fixtureDocumentState(webView)}", 0, cleartextBytes.get())
         }
     }
 
@@ -192,6 +229,8 @@ class ShellNavigationInstrumentedTest {
         fail("Timed out waiting for $description; " +
             "page=${diagnosticView?.let(::fixtureDocumentState)}; " +
             "requests=${synchronized(requestedPaths) { requestedPaths.toList() }}; " +
-            "cleartextConnections=${cleartextConnections.get()}; intentHits=${monitor?.hits}")
+            "cleartextConnections=${cleartextConnections.get()}; " +
+            "cleartextBytes=${cleartextBytes.get()}; readErrors=${cleartextReadErrors.get()}; " +
+            "intentHits=${monitor?.hits}")
     }
 }
