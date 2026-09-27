@@ -50,6 +50,14 @@ before each address is tested. Record loopback and non-loopback results separate
 a skipped non-loopback test is missing evidence. The original 872-byte loopback
 POST failure does not establish a global provider bypass.
 
+For a direct blocked POST, accept either the shell's "HTTPS required" error or
+the unchanged, ready HTTPS fixture with no shell error. The provider can cancel
+before the app's interception/error notification path. The JavaScript execution
+marker remains mandatory, and both outcomes require zero listener bytes after
+the observation period. A generic load error or a replaced document cannot count
+as the retained-fixture outcome. This UI distinction does not waive any redirect
+or transport assertion.
+
 For a focused cleartext rerun:
 
 ```sh

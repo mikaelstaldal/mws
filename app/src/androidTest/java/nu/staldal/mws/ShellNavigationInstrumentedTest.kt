@@ -193,23 +193,35 @@ class ShellNavigationInstrumentedTest {
             "window.open('$http')",
             "var f=document.getElementById('post');f.action='$http';f.target='_blank';f.submit()")) {
             // A local intercepted response can commit with the rejected URL: always reset the fixture.
-            onMain { webView.loadUrl(page) }
+            onMain {
+                // Recover through the holder so a prior intercepted flow's error is cleared.
+                if (activity.holder()?.error != null) activity.holder()?.retry()
+                webView.loadUrl(page)
+            }
             await("fixture ready after reset: $page") { fixtureDocumentReady(webView, page) }
-            evaluateChecked(webView, script)
+            assertEquals("no stale shell error before $script", null, onMain { activity.holder()?.error })
+            val documentToken = UUID.randomUUID().toString()
+            evaluateChecked(webView, "window.__mwsDocumentToken='$documentToken';$script")
             if (script.contains("/redirect")) {
                 val post = script.contains("/redirect-post")
                 val path = "${if (post) "/redirect-post" else "/redirect"}?target=$encoded"
                 await("HTTPS redirect source reached: $path") { requestedMethods[path] != null }
                 assertEquals("redirect source method", if (post) "POST" else "GET", requestedMethods[path])
             }
-            // Ungestured popups intentionally test refusal only, not the window probe.
+            SystemClock.sleep(3_000)
+            // A provider may cancel before interception/error callbacks, retaining the HTTPS
+            // document. If interception runs, the shell instead shows HTTPS required.
+            // evaluateChecked proves submission executed; the listener proves no transmission.
             if (script.contains("getElementById('post')") &&
                 !script.contains("_blank") && !script.contains("/redirect")) {
-                await("HTTPS-required error for $script") {
-                    onMain { activity.holder()?.error == R.string.shell_https_required }
-                }
+                val error = onMain { activity.holder()?.error }
+                assertTrue("$host: blocked POST must show HTTPS required or retain the fixture; " +
+                    "error=$error; page=${fixtureDocumentState(webView)}",
+                    error == R.string.shell_https_required ||
+                        (error == null && fixtureDocumentReady(webView, page)))
+                if (error == null) evaluateChecked(webView,
+                    "if(window.__mwsDocumentToken!=='$documentToken')throw Error('Document replaced')")
             }
-            SystemClock.sleep(3_000)
             assertEquals("$host: $script; listener read errors", 0, cleartextReadErrors.get())
             assertEquals("$host: $script; connections=${cleartextConnections.get()}; " +
                 "page=${fixtureDocumentState(webView)}", 0, cleartextBytes.get())
