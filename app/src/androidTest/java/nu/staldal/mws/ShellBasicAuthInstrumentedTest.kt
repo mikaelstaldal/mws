@@ -209,8 +209,10 @@ class ShellBasicAuthInstrumentedTest {
             }
             await("replacement's top-level challenge is cancelled") { cancelled.get() }
         } finally {
-            onMain { replacementAuth?.close() }
-            runBlocking { services.profiles.release(replacement) }
+            onMain {
+                replacementAuth?.close()
+                services.profiles.release(replacement)
+            }
         }
         SystemClock.sleep(1500)
         assertTrue(myPass.lookups.isEmpty())
