@@ -88,6 +88,7 @@ class NewWindowTransportTest {
         val results = mutableListOf<String?>()
         val client = WindowProbeClient(finish = { results.add(it) })
         val response = client.shouldInterceptRequest(view, request("https://example.com/", "POST"))
+        assertEquals(204, response.statusCode)
         assertEquals(-1, response.data.read())
         assertTrue(client.shouldOverrideUrlLoading(view, request("https://example.com/next")))
         shadowOf(Looper.getMainLooper()).idle()

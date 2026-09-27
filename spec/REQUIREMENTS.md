@@ -235,10 +235,11 @@ Timers pause while a MyPass request started by that attempt is outstanding.
   - The destination is determined before anything is sent.
   - An in-scope HTTPS destination loads in the existing shell.
   - An out-of-scope allowed HTTPS destination opens in the system default browser.
-  - A non-GET request, an undeterminable destination, or `about:blank` is rejected with a non-fatal message.
+  - A non-GET request, an undeterminable destination, or `about:blank` is rejected with a non-fatal message. A blank window is rejected even when its opener navigates it afterwards, and a window that has been rejected can never be routed later.
+  - Routing a new window sends no request byte, commits no document for the destination, and leaves no web data in the app's profile.
+  - The one exception is the opener's own origin. `window.open()` gives the opener access to the new window's initial blank document before Android reports the window, and that document has the opener's origin. The opener can therefore write its own origin's cookies and storage through it. This needs no authority beyond what the opener already has, and it cannot reach any other origin's data.
   - An ungestured `window.open()` opens nothing.
   - No second visible WebView or window is ever created.
-- **Temporary implementation exception (mws-f70c69)**: while the opener-access problem is researched, basic HTTPS new-window routing is enabled after GET routing qualification. Blank-popup state mutation and redirection are not prevented reliably, and POST/zero-byte security qualification is deferred. The strict requirements above remain the target; this reduced-security state is authorized for continued implementation and testing.
 - **Open in browser**: long-pressing a link offers it only for an allowed HTTPS URL, and it acts only on that deliberate choice.
 - **System browser handoff**: no credentials, Authorization/Cookie headers, referrer, or web data are transferred. Userinfo URLs are rejected. Credential-like parameters trigger the redacted consent from §4.1 (Continue / Cancel). If no browser is available, show a non-fatal error and stay on the page.
 - **External schemes**: the version 1 allowlist is exactly `mailto:`, `tel:`, `sms:`, `geo:` and `market:`.

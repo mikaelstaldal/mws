@@ -3,12 +3,15 @@ package nu.staldal.mws
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.webkit.WebViewFeature
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.runBlocking
+import okhttp3.mockwebserver.MockResponse
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.concurrent.atomic.AtomicInteger
 
 /** Exercises the production probes against the installed WebView with network loads blocked. */
 @RunWith(AndroidJUnit4::class)
@@ -20,12 +23,20 @@ class RuntimeSelfTestInstrumentedTest {
         org.junit.Assert.assertNull("NewWindowProbe: $failure", failure)
     }
 
-    @org.junit.Ignore("Deferred to mws-f70c69: same-profile blank opener can mutate state")
-    @Test fun newWindowStrictSecurityQualification() = runBlocking {
+    /** A reachable, trusted listener as the destination: every strict case must send it zero requests. */
+    @Test fun newWindowProbeSendsNothingToControlledListener() = runBlocking {
         assumeTrue("MULTI_PROFILE", WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        val failure = NewWindowProbe(context, ShellServices.shared(context).profiles).diagnose(strictSecurity = true)
-        org.junit.Assert.assertNull("NewWindowProbe strict security: $failure", failure)
+        LocalHttpsServer().use { server ->
+            val requests = AtomicInteger()
+            server.dispatch { requests.incrementAndGet(); MockResponse() }
+            val target = server.url.resolve("/window")!!.toString()
+            val failure = NewWindowProbe(context, ShellServices.shared(context).profiles).diagnose(target)
+            org.junit.Assert.assertNull("NewWindowProbe: $failure", failure)
+            // A leaked request would be dispatched well within this quiet period.
+            delay(2_000)
+            assertEquals(0, requests.get())
+        }
     }
 
     @Test fun formFillProbePassesWithoutNetwork() = runBlocking {

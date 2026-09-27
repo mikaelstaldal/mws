@@ -45,7 +45,9 @@ internal class WindowProbeClient(
             if (request.url.scheme.equals("http", ignoreCase = true)) cleartext()
             finish(null)
         }
-        return WebResourceResponse("text/plain", "UTF-8", ByteArrayInputStream(byteArrayOf()))
+        // A local 204 neither touches the network nor commits a document for the destination.
+        return WebResourceResponse("text/plain", "UTF-8", 204, "No Content", emptyMap(),
+            ByteArrayInputStream(byteArrayOf()))
     }
     override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
         destination.afterDispatch()
@@ -75,6 +77,7 @@ internal class NewWindowRouting(
     private val scope: () -> String?,
     private val route: (String, Boolean) -> Unit,
     private val reject: (Int) -> Unit,
+    private val client: (finish: (String?) -> Unit, cleartext: () -> Unit) -> WebViewClient = ::WindowProbeClient,
 ) {
     private val handler = Handler(Looper.getMainLooper())
     private val pending = mutableSetOf<BoundWebView>()
@@ -109,7 +112,7 @@ internal class NewWindowRouting(
         timeout = Runnable { finish(null) }
         try {
             configureWindowProbe(probe.webView)
-            probe.webView.webViewClient = WindowProbeClient(::finish) { rejection = R.string.shell_https_required }
+            probe.webView.webViewClient = client(::finish) { rejection = R.string.shell_https_required }
             handler.postDelayed(timeout, 2_000)
             transport.webView = probe.webView
             message.sendToTarget()
