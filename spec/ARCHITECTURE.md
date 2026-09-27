@@ -190,7 +190,7 @@ There is no cap on apps or widgets. Every add or update handles storage/allocati
   - its version is at or above the floor;
   - it reports `MULTI_PROFILE`;
   - the runtime self-test's isolation and deletion probes pass.
-  Otherwise the app shows the provider and version with update instructions. If compatibility disappears later, profile access, discovery and clear are blocked without modifying stored data. Removal still works (§5.2). The default profile is never a fallback.
+  Otherwise the app shows the provider, version and block reason (`ProviderBlockReason`) with update instructions. If compatibility disappears later, profile access, discovery and clear are blocked without modifying stored data. Removal still works (§5.2). The default profile is never a fallback.
 - A debug build may set `debugProviderOverride=true` in `local.properties` (or `DEBUG_PROVIDER_OVERRIDE=true`) to bypass the package floor and a pending self-test during development. It still requires `MULTI_PROFILE` and does not override an explicitly failed isolation or deletion probe. Release builds cannot enable this override.
 - **Runtime self-test** match key: provider package, provider version, Android API level and primary CPU ABI. It runs on first start and whenever the key changes, before any provider-sensitive feature is enabled.
   - It uses dedicated disposable profiles and no network. Synthetic responses for a reserved `.invalid` HTTPS origin are served via `shouldInterceptRequest`.

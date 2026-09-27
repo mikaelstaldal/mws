@@ -76,7 +76,19 @@ class ProviderErrorActivity : AppCompatActivity() {
         }
         message.text = getString(R.string.provider_incompatible,
             decision.key?.packageName ?: getString(R.string.provider_unknown),
-            decision.key?.version ?: getString(R.string.provider_unknown))
+            decision.key?.version ?: getString(R.string.provider_unknown)) +
+            decision.reason?.let { "\n\n" + getString(R.string.provider_reason, getString(it.messageRes)) }.orEmpty()
         settingsButton.isEnabled = decision.key != null
     }
+}
+
+val ProviderBlockReason.messageRes: Int get() = when (this) {
+    ProviderBlockReason.NO_PROVIDER -> R.string.provider_reason_no_provider
+    ProviderBlockReason.UNLISTED_PROVIDER -> R.string.provider_reason_unlisted
+    ProviderBlockReason.INVALID_VERSION -> R.string.provider_reason_invalid_version
+    ProviderBlockReason.BELOW_FLOOR -> R.string.provider_reason_below_floor
+    ProviderBlockReason.NO_MULTI_PROFILE -> R.string.provider_reason_no_multi_profile
+    ProviderBlockReason.SELF_TEST_PENDING -> R.string.provider_reason_self_test_pending
+    ProviderBlockReason.ISOLATION_FAILED -> R.string.provider_reason_isolation_failed
+    ProviderBlockReason.DELETION_FAILED -> R.string.provider_reason_deletion_failed
 }

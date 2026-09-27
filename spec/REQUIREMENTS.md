@@ -281,7 +281,7 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 - Two entries for the same site can be signed in to different accounts at the same time.
 - Web data persists across launches.
 - Opening one app never touches another app's data.
-- If the installed WebView cannot provide real per-app isolation, the app refuses to launch web apps and shows an actionable compatibility error with the provider and version and how to update. It never falls back to shared data. Configuration still works, and removal remains available.
+- If the installed WebView cannot provide real per-app isolation, the app refuses to launch web apps and shows an actionable compatibility error with the provider, version, the specific reason it is blocked, and how to update. It never falls back to shared data. Configuration still works, and removal remains available.
 
 ## 10. Transport security
 
