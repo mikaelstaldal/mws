@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        api: [26, 36]
+        api: [31, 36]
     steps:
       - uses: actions/checkout@v4
       - uses: gradle/actions/wrapper-validation@v4

@@ -12,7 +12,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [30])
+@Config(sdk = [31])
 @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
 class ShellPresentationTest {
     @Test fun wcagReferenceValuesAndIconSelection() {
@@ -25,11 +25,9 @@ class ShellPresentationTest {
             assertTrue(ShellColors.contrast(bar.color, !bar.darkIcons) >= 4.5)
         }
     }
-    @Test fun alphaUsesActiveSurfaceAndApi26NavigationFallsBack() {
+    @Test fun alphaUsesActiveSurfaceAndMissingManifestFallsBack() {
         assertEquals(Color.BLACK, ShellColors.bar(Color.TRANSPARENT, Color.BLACK, Color.BLUE).color)
         assertEquals(Color.WHITE, ShellColors.bar(Color.TRANSPARENT, Color.WHITE, Color.BLUE).color)
-        assertEquals(Color.BLACK, ShellColors.bar(Color.WHITE, Color.WHITE, Color.BLACK, false).color)
-        assertFalse(ShellColors.bar(Color.WHITE, Color.WHITE, Color.BLACK, false).darkIcons)
         assertEquals(Color.BLUE, ShellColors.bar(null, Color.BLACK, Color.BLUE).color)
     }
     @Test @Config(qualifiers = "night") fun darkThemeBackgroundFallbackUsesActiveSurface() {

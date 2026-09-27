@@ -99,7 +99,7 @@ class EditorActivityTest {
         await { activity.isFinishing }
     }
 
-    @org.robolectric.annotation.Config(sdk = [28])
+    @org.robolectric.annotation.Config(sdk = [31])
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     @Test fun existingStoredIconIsPreviewedWithoutStartingDiscovery() {
         runBlocking { ShellServices.shared(context).profiles.prepareConfiguration() }
@@ -329,7 +329,7 @@ class EditorActivityTest {
         assertEquals("https://other.example/path", saved()[0].launchUrl)
     }
 
-    @org.robolectric.annotation.Config(sdk = [28])
+    @org.robolectric.annotation.Config(sdk = [31])
     @org.robolectric.annotation.GraphicsMode(org.robolectric.annotation.GraphicsMode.Mode.NATIVE)
     @Test fun originSavePrunesOldIconAndKeepsExactDraftDiscoveredIcon() {
         installMaintenance { true }

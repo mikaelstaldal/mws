@@ -6,7 +6,6 @@ import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.drawable.Drawable
 import android.graphics.ColorFilter
-import android.os.Build
 import android.util.TypedValue
 import android.view.View
 import androidx.core.graphics.ColorUtils
@@ -27,11 +26,8 @@ internal object ShellColors {
             0.7152 * linear(Color.green(color)) + 0.0722 * linear(Color.blue(color))
         return if (white) 1.05 / (luminance + 0.05) else (luminance + 0.05) / 0.05
     }
-    fun bar(manifest: Int?, surface: Int, fallback: Int, darkSupported: Boolean = true): Bar {
-        fun choose(color: Int): Bar {
-            val dark = darkSupported && contrast(color, false) > contrast(color, true)
-            return Bar(color, dark)
-        }
+    fun bar(manifest: Int?, surface: Int, fallback: Int): Bar {
+        fun choose(color: Int) = Bar(color, contrast(color, false) > contrast(color, true))
         val candidate = manifest?.let { ColorUtils.compositeColors(it, surface) }?.let(::choose)
         return candidate?.takeIf { contrast(it.color, !it.darkIcons) >= 4.5 }
             ?: choose(ColorUtils.compositeColors(fallback, surface))
@@ -59,15 +55,11 @@ internal class ShellPresentation(private val activity: Activity, private val con
         activity.window.apply {
             statusBarColor = Color.TRANSPARENT
             navigationBarColor = Color.TRANSPARENT
-            if (Build.VERSION.SDK_INT >= 28) {
-                attributes = attributes.apply {
-                    layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
-                }
+            attributes = attributes.apply {
+                layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
             }
-            if (Build.VERSION.SDK_INT >= 29) {
-                isStatusBarContrastEnforced = false
-                isNavigationBarContrastEnforced = false
-            }
+            isStatusBarContrastEnforced = false
+            isNavigationBarContrastEnforced = false
         }
         ViewCompat.setOnApplyWindowInsetsListener(content) { view, insets ->
             val bars = insets.getInsets(WindowInsetsCompat.Type.systemBars() or WindowInsetsCompat.Type.displayCutout())
@@ -87,7 +79,7 @@ internal class ShellPresentation(private val activity: Activity, private val con
 
     fun apply(app: ConfiguredApp?) {
         val status = ShellColors.bar(app?.themeColor, surface, fallback)
-        val navigation = ShellColors.bar(app?.themeColor, surface, fallback, Build.VERSION.SDK_INT >= 27)
+        val navigation = ShellColors.bar(app?.themeColor, surface, fallback)
         taskColor = status.color
         backdrop.status = status.color
         backdrop.navigation = navigation.color
@@ -124,7 +116,7 @@ internal class ShellPresentation(private val activity: Activity, private val con
         }
         override fun setAlpha(alpha: Int) {}
         override fun setColorFilter(colorFilter: ColorFilter?) {}
-        @Suppress("DEPRECATION")
+        @Suppress("OVERRIDE_DEPRECATION")
         override fun getOpacity() = android.graphics.PixelFormat.OPAQUE
     }
 }

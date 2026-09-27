@@ -11,7 +11,7 @@ import java.util.UUID
 import javax.xml.parsers.DocumentBuilderFactory
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [31])
 class MaintenanceStoreTest {
     private fun open(): MaintenanceStore = MaintenanceStore(RuntimeEnvironment.getApplication())
 

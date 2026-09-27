@@ -5,7 +5,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
-@org.robolectric.annotation.Config(sdk = [28])
+@org.robolectric.annotation.Config(sdk = [31])
 @RunWith(RobolectricTestRunner::class)
 class DiscoveryBasicAuthenticationTest {
     private class Answer : AuthAnswer {

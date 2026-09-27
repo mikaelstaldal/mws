@@ -10,7 +10,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [31])
 class FormFillEngineTest {
     private class Bridge : FormFillBridge {
         override val supported = true

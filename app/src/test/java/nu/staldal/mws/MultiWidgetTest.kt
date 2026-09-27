@@ -12,7 +12,7 @@ import android.view.View
 import android.widget.TextView
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [31])
 class MultiWidgetTest {
     private fun app(id: String, position: Int, state: ProfileState = ProfileState.ACTIVE) =
         ConfiguredApp(id = id, name = id, nameSource = NameSource.USER_EDITED,
@@ -111,15 +111,23 @@ class MultiWidgetTest {
             clearing.findViewById<TextView>(R.id.widget_row_state).text.toString())
     }
 
-    @Test fun widgetManifestAllowsOnlyProtectedCollectionBinding() {
+    @Test fun collectionEmbedsRowsInOrder() {
+        val context = RuntimeEnvironment.getApplication()
+        val items = MultiWidget.collection(context, listOf(app("b", 0), app("a", 1)))
+        assertEquals(2, items.itemCount)
+        assertEquals(listOf(0L, 1L), (0 until items.itemCount).map(items::getItemId))
+        assertEquals("a", items.getItemView(1).apply(context, null)
+            .findViewById<TextView>(R.id.widget_row_name).text.toString())
+        assertEquals(1, items.viewTypeCount)
+    }
+
+    @Test fun widgetManifestExportsNoCollectionServiceAndOnlyConfiguration() {
         val manifest = DocumentBuilderFactory.newInstance().newDocumentBuilder()
             .parse(File("src/main/AndroidManifest.xml"))
         val services = manifest.getElementsByTagName("service")
-        val remote = (0 until services.length).map { services.item(it) }
-            .first { it.attributes.getNamedItem("android:name")?.nodeValue == ".MultiWidgetService" }
-        assertEquals("true", remote.attributes.getNamedItem("android:exported").nodeValue)
-        assertEquals("android.permission.BIND_REMOTEVIEWS",
-            remote.attributes.getNamedItem("android:permission").nodeValue)
+        assertTrue((0 until services.length).map { services.item(it) }.none {
+            it.attributes.getNamedItem("android:permission")?.nodeValue ==
+                "android.permission.BIND_REMOTEVIEWS" })
         val activities = manifest.getElementsByTagName("activity")
         val configure = (0 until activities.length).map { activities.item(it) }
             .first { it.attributes.getNamedItem("android:name")?.nodeValue ==

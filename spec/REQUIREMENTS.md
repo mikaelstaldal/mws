@@ -1,6 +1,6 @@
 # Mobile Web Shell — Functional Requirements
 
-Platform: native Android, minimum Android 8.0 (API 26), target the latest stable SDK.
+Platform: native Android, minimum Android 12 (API 31), target the latest stable SDK.
 Application name: Mobile Web Shell.
 
 This document states *what* the app must do. How it is built, meaning WebView profile mechanics,
@@ -213,7 +213,7 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 - A dedicated screen with one WebView and no browser chrome (no app bar, address bar, navigation buttons, tabs or overflow menu).
 - Content fills the window and is never obscured by the status bar or the bottom navigation bar / gesture area. The shell draws edge-to-edge on all API levels and insets the web content.
 - `display: fullscreen` may hide the status bar but never the bottom navigation area. `standalone`, `minimal-ui`, `browser` and unknown values all give the same chromeless shell with normal system bars. Display never changes orientation or task behavior.
-- `theme_color` tints the status bar, navigation bar and Recents task color. Black or white system-bar icons are chosen by higher WCAG 2.1 contrast, and the manifest color is used only when that contrast is at least 4.5:1; otherwise the app theme's color is used. Alpha colors are composited over the active light/dark surface before measuring. On API 26 (no dark nav-bar icons), the nav bar uses the manifest color only when white icons reach 4.5:1.
+- `theme_color` tints the status bar, navigation bar and Recents task color. Black or white system-bar icons are chosen by higher WCAG 2.1 contrast, and the manifest color is used only when that contrast is at least 4.5:1; otherwise the app theme's color is used. Alpha colors are composited over the active light/dark surface before measuring.
 - `background_color` paints the window behind the WebView before first paint, unless invalid or fully transparent.
 - Neither manifest color ever affects native configuration screens.
 - Each configured app has its own Recents entry with that app's icon and name. Different apps can be live at the same time. Launching an app whose shell is already live brings it forward and never creates a second shell or discards its state.
@@ -341,7 +341,7 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 - Adding one opens a configuration screen to pick the app. Tap to open that app directly in its shell.
 - Multiple instances may point to the same or different apps.
 - A removed target shows the default icon and "App unavailable", and tapping it opens the main screen. A `CLEARING` target shows "App data maintenance".
-- Reconfiguration is supported on API 31+. Earlier versions remove and re-add the widget.
+- Reconfiguration is supported.
 
 ### 12.3 Common
 

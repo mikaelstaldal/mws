@@ -253,7 +253,7 @@ class MainActivity : AppCompatActivity() {
             // Once Done starts, commit and its widget notifications survive activity destruction.
             val result = withContext(NonCancellable) {
                 repository.reorder(ids).also {
-                    if (it == ConfigurationWriteResult.Success) {
+                    if (it == ConfigurationWriteResult.Success) withContext(Dispatchers.IO) {
                         MultiWidget.refresh(applicationContext)
                         SingleWidget.refresh(applicationContext)
                     }
@@ -282,6 +282,8 @@ class MainActivity : AppCompatActivity() {
         rows.findViewWithTag<View>(id)?.let { moved ->
             moved.requestFocus()
             moved.performAccessibilityAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_ACCESSIBILITY_FOCUS, null)
+            // Accessibility focus alone does not convey the new position; no non-deprecated API does.
+            @Suppress("DEPRECATION")
             moved.announceForAccessibility(getString(R.string.reorder_position, target + 1, order.size))
         }
         return true

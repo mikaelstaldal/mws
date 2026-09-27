@@ -11,7 +11,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [31])
 class StartupReconciliationTest {
     @Test fun interruptedRestoreUsesRecordedGenerationAndRepairsOrder() = runBlocking {
         val context: Context = RuntimeEnvironment.getApplication()

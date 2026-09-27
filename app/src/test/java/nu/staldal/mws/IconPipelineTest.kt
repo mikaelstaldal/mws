@@ -14,7 +14,7 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [31])
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
 class IconPipelineTest {
     @Test fun fetchesCanonicalUrl() {

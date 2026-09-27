@@ -15,7 +15,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [31])
 class ProviderSelfTestTest {
     private val context: Context = RuntimeEnvironment.getApplication()
 

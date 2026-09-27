@@ -45,19 +45,18 @@ class WidgetAcceptanceInstrumentedTest {
         val repository = services.repository
         val fixtures = listOf(app("Widget test: before"), app("Widget test: clearing"),
             app("Widget test: after"))
-        val factory = MultiWidgetService.Factory(context, id)
         MaintenanceStore(context).use { store ->
             val prior = store.widget(id)
             saveFixture(id, prior, fixtures.map { it.id })
             var configure: MultiWidgetConfigureActivity? = null
             try {
-                // Exercise the real collection factory with an installed widget lacking a record.
+                // Exercise the real collection builder with an installed widget lacking a record.
                 store.deleteWidget(id)
-                factory.onDataSetChanged()
+                var items = MultiWidget.collection(context, MultiWidget.apps(context, id))
                 val ordered = repository.ordered()
-                assertEquals(ordered.size, factory.count)
+                assertEquals(ordered.size, items.itemCount)
                 ordered.forEachIndexed { index, app ->
-                    val view = onMain { factory.getViewAt(index)!!.apply(context, null) }
+                    val view = onMain { items.getItemView(index).apply(context, null) }
                     assertEquals(app.name, view.findViewById<TextView>(R.id.widget_row_name).text.toString())
                 }
                 for (app in fixtures) assertEquals(ConfigurationWriteResult.Success, repository.add(app))
@@ -65,10 +64,10 @@ class WidgetAcceptanceInstrumentedTest {
                 // Selecting the clearing app in an existing record must retain its disabled row.
                 store.putWidget(WidgetRecord(id, WidgetType.MULTI_APP, SelectionMode.SELECTED_SUBSET,
                     fixtures.map { it.id }.toSet()))
-                factory.onDataSetChanged()
-                assertEquals(3, factory.count)
+                items = MultiWidget.collection(context, MultiWidget.apps(context, id))
+                assertEquals(3, items.itemCount)
                 fixtures.forEachIndexed { index, app ->
-                    val view = onMain { factory.getViewAt(index)!!.apply(context, null) }
+                    val view = onMain { items.getItemView(index).apply(context, null) }
                     assertEquals(app.name, view.findViewById<TextView>(R.id.widget_row_name).text.toString())
                     if (index == 1) {
                         assertFalse(view.isEnabled)
@@ -115,7 +114,6 @@ class WidgetAcceptanceInstrumentedTest {
                 }
             } finally {
                 onMain { configure?.finish() }
-                factory.onDestroy()
                 restoreFixture(services, store)
             }
         }

@@ -16,7 +16,7 @@ import org.robolectric.annotation.Config
 import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [31])
 class ProfileManagerTest {
     private val context: Context get() = RuntimeEnvironment.getApplication()
     private lateinit var database: ConfigurationDatabase

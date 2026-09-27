@@ -8,7 +8,6 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.util.Log
 import android.view.View
@@ -18,7 +17,6 @@ import android.widget.LinearLayout
 import android.widget.RadioButton
 import android.widget.RadioGroup
 import android.widget.RemoteViews
-import android.widget.RemoteViewsService
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
@@ -58,20 +56,32 @@ object MultiWidget {
         if (ids.isEmpty()) return
         for (id in ids) {
             val views = baseViews(context, id)
-            val adapter = Intent(context, MultiWidgetService::class.java)
-                .putExtra(AppWidgetManager.EXTRA_APPWIDGET_ID, id)
-                .setData(android.net.Uri.parse("mws-widget:$id"))
-            views.setRemoteAdapter(R.id.widget_list, adapter)
+            views.setRemoteAdapter(R.id.widget_list, collection(context, apps(context, id)))
             // Android collections merge each row's app ID into this explicit template.
             views.setPendingIntentTemplate(R.id.widget_list, PendingIntent.getActivity(
                 context, id, Intent(context, ShellActivity::class.java)
                     .setAction(ShellActivity.ACTION_OPEN)
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT),
-                PendingIntent.FLAG_UPDATE_CURRENT or mutableFlag()))
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE))
             manager.updateAppWidget(id, views)
-            manager.notifyAppWidgetViewDataChanged(id, R.id.widget_list)
         }
     }
+
+    /** The rows a widget shows; empty when it is gone or the configuration cannot be read. */
+    internal fun apps(context: Context, widgetId: Int): List<ConfiguredApp> {
+        if (widgetId !in installed(context)) return emptyList()
+        val ordered = try { runBlocking {
+            ShellServices.shared(context).profiles.prepareConfiguration()
+            ConfigurationRepository(ConfigurationDatabase.shared(context)).ordered()
+        }
+        } catch (_: Exception) { return emptyList() }
+        return MaintenanceStore(context).use { store -> select(ordered, store.widget(widgetId)) }
+    }
+
+    internal fun collection(context: Context, apps: List<ConfiguredApp>): RemoteViews.RemoteCollectionItems =
+        RemoteViews.RemoteCollectionItems.Builder().setViewTypeCount(1).apply {
+            apps.forEachIndexed { position, app -> addItem(position.toLong(), rowViews(context, app)) }
+        }.build()
 
     internal fun baseViews(context: Context, id: Int): RemoteViews =
         RemoteViews(context.packageName, R.layout.widget_multi).apply {
@@ -108,7 +118,6 @@ object MultiWidget {
             .setData(android.net.Uri.parse("mws-widget-main:$id")),
         PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
 
-    private fun mutableFlag() = if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0
     private const val ACTION_MAIN = "nu.staldal.mws.action.WIDGET_MAIN"
 }
 
@@ -135,37 +144,6 @@ class MultiWidgetProvider : AppWidgetProvider() {
             val result = goAsync()
             MultiWidget.launch { try { MultiWidget.reconcile(context) } finally { result.finish() } }
         }
-    }
-}
-
-class MultiWidgetService : RemoteViewsService() {
-    override fun onGetViewFactory(intent: Intent): RemoteViewsFactory = Factory(
-        applicationContext, intent.getIntExtra(AppWidgetManager.EXTRA_APPWIDGET_ID,
-            AppWidgetManager.INVALID_APPWIDGET_ID))
-
-    internal class Factory(private val context: Context, private val widgetId: Int) : RemoteViewsFactory {
-        private var apps: List<ConfiguredApp> = emptyList()
-
-        override fun onCreate() = onDataSetChanged()
-        override fun onDataSetChanged() {
-            if (widgetId !in MultiWidget.installed(context)) { apps = emptyList(); return }
-            val ordered = try { runBlocking {
-                ShellServices.shared(context).profiles.prepareConfiguration()
-                ConfigurationRepository(ConfigurationDatabase.shared(context)).ordered()
-            }
-            } catch (_: Exception) { apps = emptyList(); return }
-            MaintenanceStore(context).use { store -> apps = MultiWidget.select(ordered, store.widget(widgetId)) }
-        }
-        override fun onDestroy() { apps = emptyList() }
-        override fun getCount() = apps.size
-        override fun getViewAt(position: Int): RemoteViews? {
-            val app = apps.getOrNull(position) ?: return null
-            return MultiWidget.rowViews(context, app)
-        }
-        override fun getLoadingView(): RemoteViews? = null
-        override fun getViewTypeCount() = 1
-        override fun getItemId(position: Int): Long = position.toLong()
-        override fun hasStableIds() = false
     }
 }
 

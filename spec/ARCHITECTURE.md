@@ -5,7 +5,7 @@ This document records the technical design and constraints that implement
 
 ## 1. Technology baseline
 
-- Native Android, Kotlin. Minimum SDK 26; target SDK is the latest stable.
+- Native Android, Kotlin. Minimum SDK 31; target SDK is the latest stable.
 - The initial build uses one `app` module, Gradle 8.14.3, Android Gradle Plugin 8.13.2, Kotlin 2.2.21, Java 21 as the build toolchain and Java/Kotlin bytecode target, and compile/target SDK 36 (the stable API at scaffold time). Versions are pinned in `gradle/libs.versions.toml`; API 37 is still a preview.
 - AndroidX/Jetpack and Material components for native screens.
 - Room (or equivalent structured persistence) for non-secret configuration and metadata.
@@ -286,7 +286,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 - `ShellPresentation` owns the shell window backdrop and applies system-bar, display-cutout and IME insets to the content container. Native activities do not use it.
 - The editor applies system-bar, display-cutout and IME insets to its scroll viewport, preserving form spacing and scrolling above the keyboard. The provider-error screen adds system-bar and display-cutout insets to its existing content padding. Repeated inset dispatches replace the safe-area padding rather than accumulating it.
 - The main screen applies system-bar and display-cutout insets to its root container, keeping both the scrolling list and floating Add button within the safe content area.
-- `ShellColors` composites manifest colors over the active Material surface and chooses WCAG icon contrast; API 26 navigation bars allow only white icons. Recents uses the selected status-bar color.
+- `ShellColors` composites manifest colors over the active Material surface and chooses WCAG icon contrast. Recents uses the selected status-bar color.
 - `background_color` is the window and initial WebView background before the first visible paint; the WebView restores its normal white canvas at the first visible commit, including after renderer recovery.
 
 ### 9.4 Navigation policy implementation
@@ -370,7 +370,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 
 ## 13. Widgets
 
-- A multi-app widget uses a `RemoteViews` collection (`RemoteViewsService` / `RemoteCollectionItems` on API 31+), is resizable, and orders rows by `sortPosition`. A single-app widget targets 1×1 and is reconfigurable on API 31+.
+- A multi-app widget uses a `RemoteViews` collection whose rows are embedded as `RemoteCollectionItems` on each refresh (no `RemoteViewsService`), is resizable, and orders rows by `sortPosition`. A single-app widget targets 1×1 and is reconfigurable.
 - Single-app widgets use an immutable explicit activity `PendingIntent` carrying only the opaque app ID for active targets; unavailable or maintenance targets open the main screen. Configuration validates that the widget ID belongs to the single-app provider and rechecks that the chosen app is active before saving. Missing or wrong-type records render as unavailable.
 - The collection binds its empty view through `RemoteViews.setEmptyView`; the empty view fills the content area so taps anywhere below the header open the main screen while empty. Header and empty-state `PendingIntent`s are immutable and explicit. Android collection rows require a mutable, explicit activity `PendingIntent` template plus per-row fill-in intents; direct per-row pending intents are unsupported by `RemoteViews` collections. The fill-in carries only the opaque app ID. `ShellActivity` validates it against the current DB and blocks removed or `CLEARING` apps before loading. No intent or widget record contains a URL or credential. See [Android collection click handling](https://developer.android.com/develop/ui/views/appwidgets/collections#clicks).
 - Updates are triggered by add, edit, remove, icon change, reorder, clear state changes, `BOOT_COMPLETED`, `MY_PACKAGE_REPLACED` and `onAppWidgetOptionsChanged`.
@@ -385,7 +385,7 @@ URL normalization (including every R§6.1 and R§10 case: userinfo, default port
 
 ### 14.2 Instrumented tests (controlled HTTPS test servers)
 
-The instrumented test fixture uses a loopback MockWebServer with a checked-in test certificate. The matching test CA is trusted by debug builds through `debug-overrides`, allowing both WebView and the test-only OkHttp client to use HTTPS without changing release trust settings. CI runs instrumented tests on API 26 and API 36 emulators; unit tests, lint, and the security source check run in the build job.
+The instrumented test fixture uses a loopback MockWebServer with a checked-in test certificate. The matching test CA is trusted by debug builds through `debug-overrides`, allowing both WebView and the test-only OkHttp client to use HTTPS without changing release trust settings. CI runs instrumented tests on API 31 and API 36 emulators; unit tests, lint, and the security source check run in the build job.
 
 - **Navigation and transport**: history/Back, redirects, TLS failures, mixed content, and cleartext rejection for configuration, links, redirects, form submissions, manifests, icons, pop-ups and external intents, with zero request bytes transmitted.
 - **New windows**: in- and out-of-scope `target="_blank"` and gestured `window.open()`; ungestured `window.open()`; `about:blank` and undeterminable destinations; non-GET requests; the probe committing nothing and leaving no profile state (strict qualification is temporarily ignored under mws-f70c69); Open in browser; missing browser; no header or credential transfer.

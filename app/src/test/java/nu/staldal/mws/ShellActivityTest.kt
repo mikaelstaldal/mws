@@ -37,7 +37,7 @@ import java.util.concurrent.TimeUnit
 import org.robolectric.util.ReflectionHelpers
 
 @RunWith(RobolectricTestRunner::class)
-@Config(sdk = [28])
+@Config(sdk = [31])
 class ShellActivityTest {
     private val context: Context get() = RuntimeEnvironment.getApplication()
     private lateinit var database: ConfigurationDatabase

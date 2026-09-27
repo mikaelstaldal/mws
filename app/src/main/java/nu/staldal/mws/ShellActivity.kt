@@ -235,6 +235,8 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         val announcement = error ?: R.string.shell_loading
         if (announcement != announcedOverlay) {
             announcedOverlay = announcement
+            // Pane titles and live regions would re-announce each rebuilt overlay (A§ accessibility).
+            @Suppress("DEPRECATION")
             view.announceForAccessibility(getString(announcement))
         }
     }

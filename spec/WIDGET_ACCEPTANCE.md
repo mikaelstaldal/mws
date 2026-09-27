@@ -25,7 +25,7 @@ adb shell am instrument -w -e holdSeconds 60 \
 The suite has two test methods covering these cases:
 
 - Missing records: temporarily delete the selection record for the installed multi-app
-  widget with the lowest ID and check that its production collection factory returns
+  widget with the lowest ID and check that its production collection items contain
   all configured apps in canonical order. Restore the original record on completion.
 - Maintenance and configuration: append three temporary apps, reserve a new generation
   for the middle one without completing the clear, and select only those apps in the
@@ -60,6 +60,6 @@ profile state or site data is changed.
 
 Report the instrumentation output (expect **OK (2 tests)**), the observed maintenance
 row behavior in One UI, and whether the original widget selection was restored. Automatic
-assertions check the device collection factory, rendered rows, configuration activity and
+assertions check the device collection items, rendered rows, configuration activity and
 storage paths; only the manual hold checks the actual launcher's rendering and tap handling.
 Neither these tests nor the development override qualify a release WebView provider.
