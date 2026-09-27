@@ -192,13 +192,14 @@ class ShellNavigationInstrumentedTest {
             "var f=document.getElementById('post');f.action='$redirect?target=$encoded';f.submit()",
             "window.open('$http')",
             "var f=document.getElementById('post');f.action='$http';f.target='_blank';f.submit()")) {
-            // A local intercepted response can commit with the rejected URL: always reset the fixture.
+            // A unique URL prevents the previous ready document from satisfying this reset.
+            val fixture = "$page?attempt=${UUID.randomUUID()}"
             onMain {
                 // Recover through the holder so a prior intercepted flow's error is cleared.
                 if (activity.holder()?.error != null) activity.holder()?.retry()
-                webView.loadUrl(page)
+                webView.loadUrl(fixture)
             }
-            await("fixture ready after reset: $page") { fixtureDocumentReady(webView, page) }
+            await("fixture ready after reset: $fixture") { fixtureDocumentReady(webView, fixture) }
             assertEquals("no stale shell error before $script", null, onMain { activity.holder()?.error })
             val documentToken = UUID.randomUUID().toString()
             evaluateChecked(webView, "window.__mwsDocumentToken='$documentToken';$script")
@@ -218,7 +219,7 @@ class ShellNavigationInstrumentedTest {
                 assertTrue("$host: blocked POST must show HTTPS required or retain the fixture; " +
                     "error=$error; page=${fixtureDocumentState(webView)}",
                     error == R.string.shell_https_required ||
-                        (error == null && fixtureDocumentReady(webView, page)))
+                        (error == null && fixtureDocumentReady(webView, fixture)))
                 if (error == null) evaluateChecked(webView,
                     "if(window.__mwsDocumentToken!=='$documentToken')throw Error('Document replaced')")
             }
