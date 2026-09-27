@@ -52,7 +52,8 @@ This document records the technical design and constraints that implement
 
 ## 4. Network security
 
-- The network security config disables cleartext with no exceptions. This is the fail-closed enforcement layer; WebView callbacks provide early cancellation and user-facing errors only.
+- The network security config disables cleartext in the base configuration and explicitly for localhost, ip6-localhost, IPv4 loopback and IPv6 loopback in both production and debug resources. Explicit localhost configuration is intended to override the platform's implicit loopback allowance; effective policy and zero-byte device tests must confirm it; debug trust anchors remain available for HTTPS tests.
+- Shell and discovery `shouldInterceptRequest` synchronously return a local empty 403 response for every HTTP request, including main-frame POST and subresources. Main-frame error/Retry state is updated on the UI thread; it is not the transmission barrier. The callback only observes the initial URL in a redirect chain, so the network security policy remains required for redirect hops and native fetches. New-window probes retain their network-disabled local-response barrier.
 - The shell's SSL error callback always cancels the request and shows a local error. No SSL callback may proceed past a certificate failure; the security source check enforces this for the shell and rejects SSL callbacks elsewhere.
 - Safe Browsing is enabled when supported. Mixed content mode is `MIXED_CONTENT_NEVER_ALLOW`. `setWebContentsDebuggingEnabled(false)` in production.
 - The provider matrix (§13) records, per flow (direct links, redirects, GET/POST form submissions, pop-ups, external intents), whether cleartext is rejected before any request bytes are sent. Failure of any flow makes that provider version incompatible.
@@ -295,7 +296,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
   - HTTPS must pass `UrlPolicy.parseNavigation`: the host and userinfo rules of an allowed HTTPS URL (R§10, so hosts failing UTS #46 STD3, such as labels with `_`, are refused even though Chromium accepts them), without the 8 KiB persisted-URL limit (long sign-in redirects must work).
   - Subframes: HTTPS, `about:`, `data:` and `blob:` load as web content; everything else is cancelled silently, and nothing from a subframe is ever delegated.
   - A cancelled navigation or refused download keeps the current page and shows a non-fatal toast. When it replaces the initial load itself (a redirect or download before the initial document's `onPageStarted`) there is no page to keep, so the error screen is shown instead.
-  - POST navigations bypass `shouldOverrideUrlLoading`. A cleartext POST is refused by the network security config before any byte is sent, and its main-frame `onReceivedError` shows "HTTPS required"; Retry never replays it.
+  - POST navigations bypass `shouldOverrideUrlLoading`. An initial HTTP POST is replaced by a local response in `shouldInterceptRequest` before transmission; a UI-thread notification shows "HTTPS required" and records its method so Retry never replays it. HTTP redirect hops rely on the explicit network security policy, since interception is not guaranteed for subsequent redirect URLs.
 - `ShellHandoff` (owned by the activity, dismissed on destroy) performs every delegation. A confirmation dialog names only the destination type; one is pending at a time and it grants nothing beyond that navigation. After confirmation, `CredentialParameters` scans the URL and a sensitive one needs a fresh `SensitiveUrlWarning` consent. External intents are `ACTION_VIEW` + `CATEGORY_BROWSABLE` + `FLAG_ACTIVITY_NEW_TASK` with only the data URI; `ActivityNotFoundException` or `SecurityException` gives a non-fatal "no app" message.
 - Multiple windows: `setSupportMultipleWindows(true)` is used solely to observe new-window requests. `javaScriptCanOpenWindowsAutomatically = false`, so an ungestured `window.open()` fails.
 - **New-window probe**: in `onCreateWindow`, create a temporary probe WebView bound to the **same app's active profile** (never the default, another app's, or a discovery profile). Learn the destination in a synchronous pre-load callback and cancel there, before any request is dispatched. Reject when:
@@ -431,3 +432,26 @@ An entry qualifies only if every flow passes. Shipped floors are generated from 
 | Provider package | Exact provider version | Android/API and image | Architecture | AndroidX WebKit | Test date | Suite revision | Evidence | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | _No provider qualified yet_ | — | — | — | — | — | — | — | `BLOCKED` |
+
+### Cleartext loopback investigation (mws-do5dy1)
+
+The Samsung Galaxy S25 SM-S931B, Android 16.0/API 36.1, WebView
+153.0.8010.36 report `provider-focused-2.txt` attached to AWB mws-0d571f
+(source diagnostic revision `a147d2dc843c3e1d8b04873069c73002fb981d76`)
+records 872 bytes received by the 127.0.0.1 listener for a POST despite a
+cleartext-disabled base configuration. Earlier GET/link checks passed; later
+flows did not run after that assertion failed. This establishes a loopback
+failure only, not a provider-wide bypass for non-loopback destinations.
+
+[Android's localhost policy documentation](https://developer.android.com/privacy-and-security/security-config#localhost)
+describes an implicit cleartext allowance starting at API 37. The
+[Android 16 QPR2 platform source](https://android.googlesource.com/platform/frameworks/base/+/android16-qpr2-release/packages/NetworkSecurityConfig/platform/src/android/security/net/config/ManifestConfigSource.java)
+also contains a feature-flagged localhost configuration. Whether it is enabled
+on this API 36.1 device is a hypothesis pending device policy diagnostics, not a
+confirmed root cause. Regression tests check the effective policy for loopback
+aliases and a non-loopback host, and separately measure HTTP bytes for IPv4/IPv6 loopback
+and the device's non-loopback IPv4 interface. Each listener address is calibrated
+with a native socket before accepting zero received bytes. A missing interface
+is an explicit skip and cannot qualify the non-loopback flow. POST-preserving
+307 redirects remain required because URL interception covers only the initial
+request. The provider remains unqualified until real-device evidence passes.

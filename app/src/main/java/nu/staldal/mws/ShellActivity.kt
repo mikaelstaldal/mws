@@ -876,8 +876,8 @@ object ShellWebSettings {
 /**
  * Applies [NavigationPolicy] (A§9.4): allowed HTTPS stays in the shell, and every other
  * destination is cancelled before any request is sent and reported through [onIntercepted].
- * POST navigations bypass `shouldOverrideUrlLoading`; a cleartext one is refused by the network
- * security config and reported as "HTTPS required" from [onReceivedError].
+ * POST navigations bypass `shouldOverrideUrlLoading`; HTTP requests are synchronously replaced
+ * with a local response in [shouldInterceptRequest], before the provider transmits them.
  */
 private class ShellWebViewClient(
     private val onIntercepted: (NavigationDecision) -> Unit = {},
@@ -908,7 +908,18 @@ private class ShellWebViewClient(
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
         onIntercept(request.url.toString())
-        return null
+        val blocked = CleartextRequestBlocker.response(request.url) ?: return null
+        if (request.isForMainFrame) {
+            val url = request.url.toString()
+            val get = request.method == "GET"
+            // Interception runs off the UI thread. The response blocks transmission synchronously;
+            // this posted callback only updates the shell's error and Retry state.
+            view.post {
+                onRequest(url, get, false)
+                onFailure(R.string.shell_https_required)
+            }
+        }
+        return blocked
     }
 
     /** A§11: never answered from the provider HTTP-auth database; only the navigation gate may supply a credential. */

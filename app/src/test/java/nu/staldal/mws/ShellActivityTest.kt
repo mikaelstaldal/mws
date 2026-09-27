@@ -906,6 +906,52 @@ class ShellActivityTest {
             activity.findViewById<android.widget.TextView>(R.id.shell_error_message)?.text)
     }
 
+    @Test fun cleartextPostIsInterceptedBeforeTransmissionAndRetryDoesNotReplayIt() =
+        assertInterceptedPostRetry(commitBeforeFailure = false)
+
+    @Test fun cleartextCommitBeforePostedFailureStillRetriesTheLastSafeGet() =
+        assertInterceptedPostRetry(commitBeforeFailure = true)
+
+    private fun assertInterceptedPostRetry(commitBeforeFailure: Boolean) {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        val safe = "https://example.com/safe"
+        client.shouldOverrideUrlLoading(view, request(safe, "GET"))
+        view.loadUrl(safe)
+        client.onPageCommitVisible(view, safe)
+        val rejected = "http://127.0.0.1/submit"
+        val response = client.shouldInterceptRequest(view, request(rejected, "POST"))
+        assertNotNull(response)
+        assertEquals(403, response!!.statusCode)
+        assertEquals(-1, response.data.read())
+        if (commitBeforeFailure) {
+            client.onPageStarted(view, rejected, null)
+            client.onPageCommitVisible(view, rejected)
+        }
+        ShadowLooper.idleMainLooper()
+        assertEquals(context.getString(R.string.shell_https_required), errorText(activity))
+        val loads = view.loads
+        activity.findViewById<Button>(R.id.shell_retry_button).performClick()
+        val current = awaitWebView(activity)
+        assertSame(view, current)
+        assertEquals(loads + 1, current.loads)
+        assertEquals(safe, Shadows.shadowOf(current).lastLoadedUrl)
+    }
+
+    @Test fun cleartextSubresourceIsBlockedWithoutFailingTheMainDocument() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val response = Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view,
+            request("http://example.com/image", "GET", mainFrame = false))
+        assertNotNull(response)
+        ShadowLooper.idleMainLooper()
+        assertNull(errorText(activity))
+    }
+
     @Test fun cleartextPostFailureShowsHttpsRequiredAndRetryNeverReplaysIt() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))

@@ -217,7 +217,12 @@ class DiscoverySession(
 
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
             if (id == generation) authentication?.intercepted(request.url.toString())
-            return null
+            val blocked = CleartextRequestBlocker.response(request.url) ?: return null
+            if (request.isForMainFrame) handler.post {
+                if (id == generation && bound?.webView === view)
+                    failDocument(id, DiscoveryDocumentFailure.HTTPS_REQUIRED)
+            }
+            return blocked
         }
 
         override fun onReceivedHttpAuthRequest(view: WebView, handler: HttpAuthHandler,

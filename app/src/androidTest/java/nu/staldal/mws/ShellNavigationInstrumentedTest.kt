@@ -14,16 +14,23 @@ import kotlinx.coroutines.runBlocking
 import okhttp3.mockwebserver.MockResponse
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Assert.assertFalse
 import org.junit.Assert.fail
 import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import android.security.NetworkSecurityPolicy
+import java.net.InetSocketAddress
+import java.net.Inet4Address
+import java.net.NetworkInterface
 import java.net.InetAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketTimeoutException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.ConcurrentHashMap
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
@@ -48,6 +55,7 @@ class ShellNavigationInstrumentedTest {
     private val cleartextReadErrors = AtomicInteger()
     private val cleartextSockets = ConcurrentHashMap.newKeySet<Socket>()
     private val requestedPaths = mutableListOf<String>()
+    private val requestedMethods = ConcurrentHashMap<String, String>()
     private var monitor: Instrumentation.ActivityMonitor? = null
     private val apps = mutableListOf<String>()
     private var diagnosticView: WebView? = null
@@ -56,7 +64,7 @@ class ShellNavigationInstrumentedTest {
         val snapshot = AndroidProviderSnapshotSource(context).snapshot()
         val key = snapshot.key
         assumeTrue(key != null && snapshot.multiProfile)
-        cleartext = ServerSocket(0, 50, InetAddress.getByName("127.0.0.1"))
+        cleartext = ServerSocket(0, 50, InetAddress.getByName("::"))
         thread(isDaemon = true) {
             while (!cleartext.isClosed) {
                 val socket = runCatching { cleartext.accept() }.getOrNull() ?: break
@@ -94,8 +102,11 @@ class ShellNavigationInstrumentedTest {
         server = LocalHttpsServer()
         server.dispatch { request ->
             synchronized(requestedPaths) { requestedPaths += request.path ?: "" }
-            when (request.path) {
-                "/redirect" -> MockResponse().setResponseCode(302).setHeader("Location", http)
+            requestedMethods[request.path ?: ""] = request.method ?: ""
+            when (request.path?.substringBefore("?")) {
+                "/redirect", "/redirect-post" -> MockResponse()
+                    .setResponseCode(if (request.path?.substringBefore("?") == "/redirect-post") 307 else 302)
+                    .setHeader("Location", request.requestUrl?.queryParameter("target") ?: http)
                 "/download" -> MockResponse().setHeader("Content-Type", "application/octet-stream")
                     .setHeader("Content-Disposition", "attachment; filename=a.bin").setBody("x")
                 else -> MockResponse().setHeader("Content-Type", "text/html").setBody("""
@@ -139,18 +150,68 @@ class ShellNavigationInstrumentedTest {
     }
 
     @Test fun cleartextLinksFormsAndRedirectsTransmitZeroBytes() {
-        val (_, webView) = openShell()
+        for (host in listOf("127.0.0.1", "localhost", "127.0.0.2", "[::1]")) assertCleartextFlows(host)
+    }
+
+    @Test fun nonLoopbackCleartextFlowsTransmitZeroBytes() {
+        val host = NetworkInterface.getNetworkInterfaces().toList()
+            .flatMap { it.inetAddresses.toList() }
+            .firstOrNull { it is Inet4Address && !it.isLoopbackAddress && !it.isLinkLocalAddress }
+            ?.hostAddress
+        // A skip is missing non-loopback evidence, never a qualification pass.
+        assumeTrue("A non-loopback IPv4 interface is required", host != null)
+        assertCleartextFlows(checkNotNull(host))
+    }
+
+    @Test fun networkPolicyRejectsLoopbackAndNonLoopbackHosts() {
+        val policy = NetworkSecurityPolicy.getInstance()
+        for (host in listOf("localhost", "ip6-localhost", "127.0.0.1", "127.0.0.2", "127.1.2.3", "::1", "[::1]", "0:0:0:0:0:0:0:1", "example.com")) {
+            assertFalse("cleartext policy for $host", policy.isCleartextTrafficPermitted(host))
+        }
+    }
+
+    private fun assertCleartextFlows(host: String) {
+        // Calibrate reachability with a native socket before accepting zero bytes as evidence.
+        assertEquals("late bytes before calibrating $host", 0, cleartextBytes.get())
+        Socket().use {
+            it.connect(InetSocketAddress(host, cleartext.localPort), 2_000)
+            it.getOutputStream().write(1)
+        }
+        await("listener reachable at $host") { cleartextBytes.get() >= 1 }
+        assertEquals("only the calibration byte at $host", 1, cleartextBytes.getAndAdd(-1))
+        val (activity, webView) = openShell()
         val page = at("/app/")
-        val http = "http://127.0.0.1:${cleartext.localPort}/leak"
-        for (script in listOf("location.href = '$http'", "document.getElementById('get').submit()",
-            "document.getElementById('post').submit()", "location.href = '${at("/redirect")}'",
-            "window.open('$http')")) {
-            if (onMain { webView.url } != page) onMain { webView.loadUrl(page) }
+        val http = "http://$host:${cleartext.localPort}/leak"
+        val redirect = at("/redirect-post")
+        // The redirect target is passed as a query, so both GET and POST redirects exercise this host.
+        val encoded = java.net.URLEncoder.encode(http, "UTF-8")
+        for (script in listOf("location.href = '$http'",
+            "var f=document.getElementById('get');f.action='$http';f.submit()",
+            "var f=document.getElementById('post');f.action='$http';f.submit()",
+            "location.href = '${at("/redirect")}?target=$encoded'",
+            "var f=document.getElementById('post');f.action='$redirect?target=$encoded';f.submit()",
+            "window.open('$http')",
+            "var f=document.getElementById('post');f.action='$http';f.target='_blank';f.submit()")) {
+            // A local intercepted response can commit with the rejected URL: always reset the fixture.
+            onMain { webView.loadUrl(page) }
             await("fixture ready after reset: $page") { fixtureDocumentReady(webView, page) }
-            evaluate(webView, script)
+            evaluateChecked(webView, script)
+            if (script.contains("/redirect")) {
+                val post = script.contains("/redirect-post")
+                val path = "${if (post) "/redirect-post" else "/redirect"}?target=$encoded"
+                await("HTTPS redirect source reached: $path") { requestedMethods[path] != null }
+                assertEquals("redirect source method", if (post) "POST" else "GET", requestedMethods[path])
+            }
+            // Ungestured popups intentionally test refusal only, not the window probe.
+            if (script.contains("getElementById('post')") &&
+                !script.contains("_blank") && !script.contains("/redirect")) {
+                await("HTTPS-required error for $script") {
+                    onMain { activity.holder()?.error == R.string.shell_https_required }
+                }
+            }
             SystemClock.sleep(3_000)
-            assertEquals("$script; listener read errors", 0, cleartextReadErrors.get())
-            assertEquals("$script; connections=${cleartextConnections.get()}; " +
+            assertEquals("$host: $script; listener read errors", 0, cleartextReadErrors.get())
+            assertEquals("$host: $script; connections=${cleartextConnections.get()}; " +
                 "page=${fixtureDocumentState(webView)}", 0, cleartextBytes.get())
         }
     }
@@ -209,6 +270,17 @@ class ShellNavigationInstrumentedTest {
     private fun at(path: String) = server.url.resolve(path)!!.toString()
 
     private fun evaluate(webView: WebView, script: String) = onMain { webView.evaluateJavascript(script, null) }
+
+    private fun evaluateChecked(webView: WebView, script: String) {
+        val done = CountDownLatch(1)
+        val result = AtomicReference<String>()
+        onMain {
+            webView.evaluateJavascript("(function(){try{$script;return 'mws-attempted';}" +
+                "catch(e){return String(e);}})()") { result.set(it); done.countDown() }
+        }
+        assertTrue("script callback: $script", done.await(5, TimeUnit.SECONDS))
+        assertEquals("script execution: $script", "\"mws-attempted\"", result.get())
+    }
 
     private fun ShellActivity.holder(): ShellHolder? =
         ShellActivity::class.java.getDeclaredField("holder").apply { isAccessible = true }
