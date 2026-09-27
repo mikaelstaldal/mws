@@ -138,6 +138,41 @@ class DiscoverySessionInstrumentedTest {
         }
     }
 
+    @Test fun cleartextRedirectIsRejectedBeforeTransmission() {
+        val profiles = testProfiles()
+        CleartextEvidenceListener().use { listener ->
+            listener.calibrate()
+            LocalHttpsServer().use { source ->
+                val sources = AtomicInteger()
+                source.dispatch {
+                    sources.incrementAndGet()
+                    MockResponse().setResponseCode(307).setHeader("Location", listener.url)
+                }
+                val finished = CountDownLatch(1)
+                val result = AtomicReference<DiscoveryDocumentResult>()
+                lateinit var session: DiscoverySession
+                ActivityScenario.launch(EditorActivity::class.java).use { scenario ->
+                    scenario.onActivity { activity ->
+                        val host = FrameLayout(activity)
+                        activity.addContentView(host, FrameLayout.LayoutParams(
+                            ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                        session = DiscoverySession(host, profiles, activity.lifecycleScope,
+                            { _, document -> result.set(document); finished.countDown() }, {}, {})
+                        session.refresh(source.url.toString())
+                    }
+                    try {
+                        assertTrue("Discovery redirect did not terminate", finished.await(20, TimeUnit.SECONDS))
+                        assertTrue("HTTPS source not reached", sources.get() > 0)
+                        assertEquals(DiscoveryDocumentFailure.HTTPS_REQUIRED, result.get().failure)
+                        Thread.sleep(3000)
+                        assertEquals("Discovery cleartext bytes", 0, listener.bytes.get())
+                        assertEquals("Listener errors", 0, listener.errors.get())
+                    } finally { runBlocking(Dispatchers.Main) { session.close() } }
+                }
+            }
+        }
+    }
+
     @Test fun firstVisibleCommitRequiresAnAttachedDisposableWebView() {
         val profiles = testProfiles()
         LocalHttpsServer().use { server ->

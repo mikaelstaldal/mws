@@ -107,6 +107,10 @@ class ShellNavigationInstrumentedTest {
                 "/redirect", "/redirect-post" -> MockResponse()
                     .setResponseCode(if (request.path?.substringBefore("?") == "/redirect-post") 307 else 302)
                     .setHeader("Location", request.requestUrl?.queryParameter("target") ?: http)
+                "/qualification-worker.js" -> MockResponse().setHeader("Content-Type", "application/javascript")
+                    .setBody("self.addEventListener('message', e => {" +
+                        "e.waitUntil(fetch(e.data, {method:'POST',body:'fixture'}).then(" +
+                        "()=>e.source.postMessage('resolved'),e=>e.source.postMessage('rejected:'+e.name)));});")
                 "/download" -> MockResponse().setHeader("Content-Type", "application/octet-stream")
                     .setHeader("Content-Disposition", "attachment; filename=a.bin").setBody("x")
                 else -> MockResponse().setHeader("Content-Type", "text/html").setBody("""
@@ -171,14 +175,7 @@ class ShellNavigationInstrumentedTest {
     }
 
     private fun assertCleartextFlows(host: String) {
-        // Calibrate reachability with a native socket before accepting zero bytes as evidence.
-        assertEquals("late bytes before calibrating $host", 0, cleartextBytes.get())
-        Socket().use {
-            it.connect(InetSocketAddress(host, cleartext.localPort), 2_000)
-            it.getOutputStream().write(1)
-        }
-        await("listener reachable at $host") { cleartextBytes.get() >= 1 }
-        assertEquals("only the calibration byte at $host", 1, cleartextBytes.getAndAdd(-1))
+        calibrateCleartextListener(host)
         val (activity, webView) = openShell()
         val page = at("/app/")
         val http = "http://$host:${cleartext.localPort}/leak"
@@ -253,6 +250,131 @@ class ShellNavigationInstrumentedTest {
         SystemClock.sleep(500)
         assertEquals(0, monitor!!.hits)
         assertFalse(activity.isFinishing)
+    }
+
+    private fun calibrateCleartextListener(host: String = "127.0.0.1") {
+        // Calibrate reachability with a native socket before accepting zero bytes as evidence.
+        assertEquals("late bytes before calibrating $host", 0, cleartextBytes.get())
+        Socket().use {
+            it.connect(InetSocketAddress(host, cleartext.localPort), 2_000)
+            it.getOutputStream().write(1)
+        }
+        await("listener reachable at $host") { cleartextBytes.get() >= 1 }
+        assertEquals("only the calibration byte at $host", 1, cleartextBytes.getAndAdd(-1))
+    }
+
+    @Test fun websocketAndServiceWorkerHttpAttemptsTransmitZeroBytes() {
+        calibrateCleartextListener()
+        val (_, view) = openShell()
+        val target = "http://127.0.0.1:${cleartext.localPort}/worker"
+        evaluateChecked(view, "window.__wsAttempted=false;window.__wsError=null;try{new WebSocket('ws://127.0.0.1:${cleartext.localPort}/ws')}" +
+            "catch(e){window.__wsError=e.name}finally{window.__wsAttempted=true}")
+        assertEquals("true", evaluateResult(view, "window.__wsAttempted"))
+        assertEquals("Expected mixed-content refusal, not a malformed fixture", "\"SecurityError\"",
+            evaluateResult(view, "window.__wsError"))
+        SystemClock.sleep(3000)
+        assertEquals("WebSocket listener read errors", 0, cleartextReadErrors.get())
+        assertEquals("WebSocket cleartext bytes", 0, cleartextBytes.get())
+        evaluateChecked(view, "window.__workerSettled=false;window.__workerError=null;" +
+            "window.__workerOutcome=null;navigator.serviceWorker.addEventListener('message',e=>{" +
+            "window.__workerOutcome=e.data;window.__workerSettled=true;});" +
+            "navigator.serviceWorker.register('/qualification-worker.js').then(()=>navigator.serviceWorker.ready)" +
+            ".then(r=>r.active.postMessage('$target')).catch(e=>window.__workerError=String(e))")
+        await("worker HTTP fetch executed and settled") {
+            evaluateResult(view, "window.__workerSettled") == "true"
+        }
+        assertEquals("Worker must reject HTTP fetch", "\"rejected:TypeError\"",
+            evaluateResult(view, "window.__workerOutcome"))
+        SystemClock.sleep(3000)
+        assertEquals("listener read errors", 0, cleartextReadErrors.get())
+        assertEquals("WebSocket/worker cleartext bytes", 0, cleartextBytes.get())
+    }
+
+    @Test fun gesturedCleartextPopupAndIntentFallbackAreNotTransmittedOrDelegated() {
+        calibrateCleartextListener()
+        val (activity, view) = openShell()
+        monitor = instrumentation.addMonitor(null as String?, null, true)
+        val http = "http://127.0.0.1:${cleartext.localPort}/gesture"
+        for (script in listOf("window.open('$http')",
+            "location.href='intent://fixture/#Intent;scheme=fixture;S.browser_fallback_url=" +
+                java.net.URLEncoder.encode(http, "UTF-8") + ";end'")) {
+            val fixture = at("/app/") + "?gesture=" + UUID.randomUUID()
+            onMain { view.loadUrl(fixture) }
+            await("gestured fixture ready") { fixtureDocumentReady(view, fixture) }
+            evaluateChecked(view, "document.body.innerHTML='<button id=gesture style=\"position:fixed;inset:0;width:100%;height:100%\">tap</button>';" +
+                "window.__gesture=false;document.getElementById('gesture').onclick=()=>{" +
+                "window.__gesture=navigator.userActivation.isActive;$script;}")
+            val coordinates = onMain {
+                val location = IntArray(2); view.getLocationOnScreen(location)
+                (location[0] + view.width / 2).toFloat() to (location[1] + view.height / 2).toFloat()
+            }
+            val time = SystemClock.uptimeMillis()
+            for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+                val event = android.view.MotionEvent.obtain(time, SystemClock.uptimeMillis(), action,
+                    coordinates.first, coordinates.second, 0)
+                try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+            }
+            await("real gesture reached fixture handler") { evaluateResult(view, "window.__gesture") == "true" }
+            SystemClock.sleep(3000)
+            assertEquals("gestured cleartext bytes: $script", 0, cleartextBytes.get())
+            assertEquals("listener errors", 0, cleartextReadErrors.get())
+            assertEquals("external intent delegated", 0, monitor!!.hits)
+            assertFalse(activity.isFinishing)
+        }
+    }
+
+    @Test fun realGesturesRouteHttpsGetInScopeAndDelegateOnlyOutOfScope() {
+        val (_, view) = openShell()
+        val inside = at("/app/inside") + "?activated=true"
+        val outside = at("/elsewhere-blank") + "?activated=true"
+        val intents = java.util.concurrent.CopyOnWriteArrayList<Intent>()
+        monitor = object : Instrumentation.ActivityMonitor() {
+            override fun onStartActivity(intent: Intent): Instrumentation.ActivityResult? {
+                intents += intent
+                return Instrumentation.ActivityResult(android.app.Activity.RESULT_CANCELED, null)
+            }
+        }
+        instrumentation.addMonitor(monitor)
+        evaluateChecked(view, "document.body.innerHTML='<button style=\"position:fixed;inset:0;width:100%;height:100%\">open</button>';" +
+            "document.querySelector('button').onclick=()=>window.open('${at("/app/inside")}?activated='+navigator.userActivation.isActive)")
+        tapCenter(view)
+        await("gestured HTTPS GET routed into parent") { fixtureDocumentReady(view, inside) }
+        assertEquals("Only the parent may request the destination", 1,
+            synchronized(requestedPaths) { requestedPaths.count { it == "/app/inside?activated=true" } })
+        assertTrue("In-scope destination delegated", intents.isEmpty())
+        evaluateChecked(view, "document.body.innerHTML='<a id=outside target=_blank style=\"position:fixed;inset:0;display:block\">open</a>';" +
+            "document.getElementById('outside').onclick=function(){this.href='${at("/elsewhere-blank")}?activated='+navigator.userActivation.isActive;}")
+        tapCenter(view)
+        await("gestured out-of-scope GET delegated") { intents.isNotEmpty() }
+        assertEquals(1, intents.size)
+        assertEquals(Intent.ACTION_VIEW, intents.single().action)
+        assertEquals(outside, intents.single().dataString)
+        SystemClock.sleep(3000)
+        assertFalse("Popup dispatched before native delegation", synchronized(requestedPaths) {
+            requestedPaths.any { it.startsWith("/elsewhere-blank") }
+        })
+        assertEquals(inside, onMain { view.url })
+    }
+
+    private fun tapCenter(view: WebView) {
+        val coordinates = onMain {
+            val location = IntArray(2); view.getLocationOnScreen(location)
+            (location[0] + view.width / 2).toFloat() to (location[1] + view.height / 2).toFloat()
+        }
+        val time = SystemClock.uptimeMillis()
+        for (action in listOf(android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_UP)) {
+            val event = android.view.MotionEvent.obtain(time, SystemClock.uptimeMillis(), action,
+                coordinates.first, coordinates.second, 0)
+            try { instrumentation.sendPointerSync(event) } finally { event.recycle() }
+        }
+    }
+
+    private fun evaluateResult(view: WebView, script: String): String? {
+        val done = CountDownLatch(1)
+        val result = AtomicReference<String?>()
+        onMain { view.evaluateJavascript(script) { result.set(it); done.countDown() } }
+        assertTrue("JavaScript callback missing: $script", done.await(5, TimeUnit.SECONDS))
+        return result.get()
     }
 
     private fun openShell(): Pair<ShellActivity, WebView> {

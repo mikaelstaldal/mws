@@ -474,7 +474,7 @@ This is the normative evidence for per-package floors. Each entry records:
 
 An entry qualifies only if every flow passes. Shipped floors are generated from qualifying entries, and a new entry is required whenever the pinned AndroidX WebKit version changes. **The initial release is blocked until at least one qualifying entry exists.**
 
-`ProviderCompatibilitySuite` packages the existing device tests. The [qualification procedure and coverage gaps](PROVIDER_QUALIFICATION.md) describe the required evidence; a passing subset or a run with skipped required tests does not qualify an entry.
+`ProviderCompatibilitySuite` packages the provider device tests; separate preparation/deletion-interruption/verification/cleanup instrumentation phases establish persisted-worker and maintenance behavior across a killed process. The [qualification procedure and coverage gaps](PROVIDER_QUALIFICATION.md) describe the required evidence; a passing subset or a run with skipped required tests does not qualify an entry.
 
 | Provider package | Exact provider version | Android/API and image | Architecture | AndroidX WebKit | Test date | Suite revision | Evidence | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |

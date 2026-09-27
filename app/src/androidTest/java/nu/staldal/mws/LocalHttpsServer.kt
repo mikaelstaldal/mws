@@ -13,7 +13,7 @@ import java.security.cert.CertificateFactory
 import java.security.cert.X509Certificate
 
 /** A controllable HTTPS origin for instrumented tests. No production trust settings are changed. */
-class LocalHttpsServer : Closeable {
+class LocalHttpsServer(port: Int = 0) : Closeable {
     private val certificate = HeldCertificate.decode(
         InstrumentationRegistry.getInstrumentation().context.assets
             .open("test-server.pem").bufferedReader().use { it.readText() }
@@ -30,7 +30,7 @@ class LocalHttpsServer : Closeable {
         .build()
     private val server = MockWebServer().apply {
         useHttps(serverCertificates.sslSocketFactory(), false)
-        start()
+        start(port)
     }
 
     // MockWebServer may resolve a canonical hostname here. Do it once on the test thread,

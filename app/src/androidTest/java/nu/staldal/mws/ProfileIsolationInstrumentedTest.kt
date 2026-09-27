@@ -140,6 +140,48 @@ class ProfileIsolationInstrumentedTest {
         }
     }
 
+    @Test fun cookieTrafficHonorsCrossSiteToggleAndRetainsProfileCookies() {
+        LocalHttpsServer().use { other ->
+            val observed = java.util.concurrent.ConcurrentHashMap<String, String>()
+            other.dispatch { request ->
+                observed[request.path.orEmpty()] = request.getHeader("Cookie").orEmpty()
+                MockResponse().setHeader("Content-Type", "image/png").setBody("fixture")
+            }
+            // localhost and 127.0.0.1 are distinct sites, while changing only port is same-site.
+            val cross = other.url.newBuilder().host("127.0.0.1").build()
+            val same = other.url.newBuilder().host("localhost").build()
+            assertEquals("Top-level site fixture must be localhost", "localhost", server.url.host)
+            val view = open(newName())
+            val manager = onMain { WebViewCompat.getProfile(view).cookieManager }
+            for (url in listOf(cross, same)) {
+                val done = CountDownLatch(1)
+                onMain { manager.setCookie(url.toString(), "traffic=fixture; Secure; SameSite=None; Path=/") {
+                    done.countDown()
+                } }
+                assertTrue("Cookie seed timed out", done.await(5, TimeUnit.SECONDS))
+                assertTrue("Cookie seed rejected", onMain { manager.getCookie(url.toString()).orEmpty().contains("traffic=fixture") })
+            }
+            fun request(base: okhttp3.HttpUrl, label: String): String {
+                val path = "/image-$label"
+                val target = base.resolve(path)!!.toString()
+                assertEquals("true", evalAsync(view, "new Promise(resolve => {" +
+                    "const image=new Image();image.onload=image.onerror=()=>resolve(true);image.src='$target';})"))
+                assertTrue("Image request missing: $target", observed.containsKey(path))
+                return observed.getValue(path)
+            }
+            onMain { backend.setThirdPartyCookies(view, false) }
+            assertFalse(request(cross, "cross-off").contains("traffic=fixture"))
+            assertTrue(request(same, "same-off").contains("traffic=fixture"))
+            onMain { backend.setThirdPartyCookies(view, true) }
+            assertTrue(request(cross, "cross-on").contains("traffic=fixture"))
+            onMain { backend.setThirdPartyCookies(view, false) }
+            assertFalse(request(cross, "cross-off-again").contains("traffic=fixture"))
+            assertTrue("Disabling must retain cookies until clear", onMain {
+                manager.getCookie(cross.toString()).orEmpty().contains("traffic=fixture")
+            })
+        }
+    }
+
     private fun writeEverything(webView: WebView, value: String) {
         eval(webView, "document.cookie = 'k=$value; Secure; SameSite=Strict; max-age=3600'")
         eval(webView, "localStorage.setItem('k', '$value')")

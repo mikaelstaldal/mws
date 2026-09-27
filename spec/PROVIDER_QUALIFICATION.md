@@ -1,8 +1,8 @@
 # Provider qualification
 
 `ProviderCompatibilitySuite` packages the existing provider-sensitive device tests.
-It is an evidence entry point, not yet a complete qualification suite. A successful
-run alone does not qualify a §15 matrix entry.
+Qualification requires all 37 suite tests plus the separate process-restart
+phases below. A successful single-process run alone does not qualify a §15 entry.
 
 Use the explicit class selection below for evidence runs. An unfiltered test
 scan may discover both this suite and its member classes, running those tests
@@ -13,9 +13,25 @@ provider, use the existing `DEBUG_PROVIDER_OVERRIDE=true` debug build option;
 release builds never permit this override. Install both APKs on the test device,
 then run:
 
+The operator can build, install and execute the complete sequence with:
+
+```sh
+scripts/run-provider-qualification.sh
+```
+
+Set `ANDROID_HOME` or `local.properties` for the installed SDK. The runner enables
+the debug override, captures build/device metadata and raw reports in a new
+`provider-evidence-*` directory, stops the app before each phase, and aborts on a
+failure, a required skip or an unexpected test count. It requires an attached
+device and a clean tracked source revision. If a previous preparation failed,
+run the explicit cleanup phase below before rerunning the runner.
+
+The single-process suite can also be selected explicitly (this alone is insufficient):
+
 ```sh
 adb shell am instrument -w -r \
   -e class nu.staldal.mws.ProviderCompatibilitySuite \
+  -e sourceRevision SOURCE_COMMIT \
   nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
@@ -33,7 +49,7 @@ Existing packaged coverage:
 | Profile isolation and deletion | `ProfileIsolationInstrumentedTest`, plus same-process isolation and fresh-process deletion probes in `RuntimeSelfTestInstrumentedTest` |
 | Cleartext links, redirects, GET/POST forms and ungestured popup | `ShellNavigationInstrumentedTest` |
 | Basic-auth request correlation and rejection | `ShellBasicAuthInstrumentedTest`, runtime callback probe |
-| Exact-origin form-fill transport | Runtime form-fill probe |
+| Exact-origin form-fill transport | Runtime form-fill probe and `FormFillMessagingInstrumentedTest` HTTPS top-level/same-origin/cross-origin frame checks |
 | Pre-dispatch popup routing | Strict runtime probe and trusted listener with zero destination requests |
 | Attached disposable discovery and superseded callbacks | `DiscoverySessionInstrumentedTest` |
 
@@ -73,19 +89,77 @@ bracketed IPv6), or a POST-preserving redirect sends bytes, treat the provider a
 incompatible. Do not waive the failure or qualify it using initial-request
 interception alone: redirect hops require a working transport policy.
 
-Also require zero-byte loopback tests for `ws://` WebSockets and service-worker
-HTTP POST fetches. WebView request interception does not cover those transports;
-they rely on network policy. They remain open qualification items. Ungestured
-`window.open` and `_blank` form passes prove refusal only, not gestured window
-probe protection.
+The suite also checks actual gestured HTTPS GET routing in scope and out of scope,
+gestured HTTP popups and prohibited `intent:` cleartext
+fallback (actual touch input and user-activation marker), loopback WebSocket and
+service-worker POST attempts, discovery HTTP redirects, same-site/cross-site
+cookie traffic with enable/disable and retention, and all four native metadata
+fetch classes' credentialless fallback and ignored Set-Cookie behavior. A native
+fetch success is required alongside empty Cookie headers and an unused
+unqualified cookie adapter. WebSocket/worker attempts rely on mixed-content and
+network policy because WebView request interception does not cover them.
 
-Before qualification, add device coverage for the remaining cases: gestured
-cleartext popups and external-intent cleartext fallback; discovery cleartext
-redirects; the four native metadata fetch classes' credentialless fallback and
-ignored Set-Cookie behavior; third-party cookie decisions across same-site and
-cross-site requests; and profile maintenance resumed after process death with
-durable journals and the real provider. Host tests of native discovery and
-maintenance support these checks but do not establish provider behavior.
+## Process-restart evidence
+
+`RestartQualificationInstrumentedTest` is intentionally outside the suite.
+Run its four methods separately with force-stop between them. Ordinary unfiltered
+discovery skips these phase methods to avoid consuming the fixture in one process.
+Explicit phase invocations must pass with no skips. Preparation registers
+an actual worker at a saved local HTTPS port, flushes cookies in dedicated
+profiles, interrupts production clear after its durable generation reservation,
+and leaves a production origin-change journal at cursor zero. It also exercises
+real loaded-profile clear/remove deferral, durable tombstones and an orphaned
+discovery profile. The second phase deletes one retiring profile through production
+clear and interrupts before its final configuration commit, then the process is
+killed again. A 12-second
+registry-write wait mirrors the existing deletion probe. Verification must use
+a different process identity, reopen the same server port/origin, observe a
+request from the persisted worker without registering it again, cancel the real
+top-level auth challenge without MyPass lookup, and resume both maintenance
+records through the production manager. Recovery requires deleted old profiles,
+ACTIVE generation 1 (no renewed reservation) and absent old cookies after
+recreating the deleted generation-0 names. Verification includes a worker-free
+auth control that must attempt a lookup, samples retirement at the actual persisted
+worker's network request, and confirms cancellation of its top-level handler. An unrelated
+control profile must retain its flushed cookie across process death.
+
+The fixture uses UUID profile names and an isolated configuration/maintenance
+store under `noBackupFilesDir/qualification-restart`; it does not change saved
+user apps. Run these phases before the ordinary suite, which may perform other
+profile maintenance. If a phase fails, preserve its report, force-stop and run
+cleanup before starting a new preparation. Cleanup of a failed run supplies no
+qualification evidence. A saved port that cannot be rebound is a test failure;
+do not silently substitute a new worker origin.
+
+```sh
+adb shell am instrument -w -r \
+  -e class nu.staldal.mws.RestartQualificationInstrumentedTest#preparePersistedWorkerAndInterruptedMaintenance \
+  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-restart-prepare.txt 2>&1
+adb shell am force-stop nu.staldal.mws
+adb shell am instrument -w -r \
+  -e class nu.staldal.mws.RestartQualificationInstrumentedTest#interruptAfterProfileDeletionBeforeFinalCommit \
+  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-restart-delete.txt 2>&1
+adb shell am force-stop nu.staldal.mws
+adb shell am instrument -w -r \
+  -e class nu.staldal.mws.RestartQualificationInstrumentedTest#verifyPersistedWorkerAndResumeMaintenance \
+  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-restart-verify.txt 2>&1
+adb shell am force-stop nu.staldal.mws
+adb shell am instrument -w -r \
+  -e class nu.staldal.mws.RestartQualificationInstrumentedTest#cleanupRestartFixture \
+  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-restart-cleanup.txt 2>&1
+adb shell am force-stop nu.staldal.mws
+adb shell am instrument -w -r \
+  -e class nu.staldal.mws.ProviderCompatibilitySuite \
+  -e sourceRevision SOURCE_COMMIT \
+  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-qualification.txt 2>&1
+```
+
+Review each report independently; a successful final invocation cannot erase
+an earlier failure. Retain all five reports. The suite emits provider package,
+exact version, model, Android/API, ABIs, pinned WebKit version and override metadata. `sourceRevision`
+is a caller-supplied label, so also retain the build log and verify it matches
+the APKs actually installed. The reported AndroidX WebKit version must match
+`gradle/libs.versions.toml`.
 
 If full-context discovery cookies remain unavailable, qualify the mandatory
 credentialless fallback and keep that runtime feature disabled. Do not claim
