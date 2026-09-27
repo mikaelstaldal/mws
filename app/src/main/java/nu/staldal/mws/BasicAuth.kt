@@ -13,7 +13,7 @@ import java.util.UUID
  * It records only the canonical top-level request URL, never a credential. A challenge is answered
  * only while exactly this gate is armed for a navigation the app itself observed before dispatch.
  */
-internal class BasicAuthGate {
+internal class BasicAuthGate(private val eligible: () -> Boolean = { true }) {
     data class Target(val url: String, val scheme: String, val host: String, val port: Int) {
         val origin: Triple<String, String, Int> get() = Triple(scheme, host, port)
     }
@@ -32,17 +32,26 @@ internal class BasicAuthGate {
 
     private val lock = Any()
     private var armed: Armed? = null
+    // Lifetime latch: clearing a navigation must never make an old request eligible again.
+    private var used = false
+    private var retired = false
+    private val startedUrls = mutableSetOf<String>()
     private val supplied = mutableSetOf<Triple<String, String, String>>()
     private var outstanding: String? = null
 
     val current: Armed? get() = synchronized(lock) { armed }
 
     /**
-     * Called immediately before the app's own load, reload or Retry, and for an allowed
-     * main-frame, non-redirect request in `shouldOverrideUrlLoading`. An ineligible URL disarms.
+     * The first call arms the initial navigation. Any later load, reload, Retry or
+     * non-redirect navigation permanently retires eligibility for this WebView.
      */
     fun arm(url: String): Armed? = synchronized(lock) {
         clear()
+        if (used || retired || !eligible()) {
+            retired = true
+            return null
+        }
+        used = true
         val target = target(url) ?: return null
         Armed(UUID.randomUUID().toString(), target).also { armed = it }
     }
@@ -63,10 +72,10 @@ internal class BasicAuthGate {
         true
     }
 
-    /** `shouldInterceptRequest`: any request other than the recorded main document disarms. */
-    fun intercepted(url: String): Boolean = synchronized(lock) {
+    /** Only the recorded main-frame document can keep lifetime eligibility. */
+    fun intercepted(url: String, mainFrame: Boolean = true): Boolean = synchronized(lock) {
         val current = armed ?: return false
-        if (target(url)?.url == current.target.url) {
+        if (mainFrame && target(url)?.url == current.target.url) {
             armed = current.copy(documentRequested = true)
             return false
         }
@@ -74,8 +83,18 @@ internal class BasicAuthGate {
         true
     }
 
+    /** Only an early first start before the main request is observed can remain eligible. */
+    fun started(url: String): Boolean = synchronized(lock) {
+        val requestUrl = target(url)?.url
+        if (requestUrl == null || armed?.target?.url != requestUrl || armed?.documentRequested == true || !startedUrls.add(requestUrl)) {
+            return disarm()
+        }
+        false
+    }
+
     /** A new main-frame navigation, commit, terminal error or cancellation. */
     fun disarm(): Boolean = synchronized(lock) {
+        retired = true
         val wasArmed = armed != null
         clear()
         wasArmed
@@ -83,6 +102,7 @@ internal class BasicAuthGate {
 
     /** `onReceivedHttpAuthRequest`. Scheme and port come from the recorded navigation. */
     fun challenge(host: String?, realm: String?): Challenge = synchronized(lock) {
+        if (!eligible()) { clear(); return Challenge.Cancel }
         val current = armed ?: return Challenge.Cancel
         if (host == null || realm == null || outstanding != null) return Challenge.Cancel
         // A challenge before the navigation's own request can only belong to a request that was
@@ -109,12 +129,18 @@ internal class BasicAuthGate {
      */
     fun supply(lookup: Challenge.Lookup): Boolean = synchronized(lock) {
         if (outstanding == lookup.identity) outstanding = null
+        if (!eligible()) { clear(); return false }
         val current = armed ?: return false
         if (current.identity != lookup.identity || current.target.url != lookup.url) return false
         supplied.add(Triple(lookup.identity, lookup.url, lookup.realm))
     }
 
     fun isCurrent(lookup: Challenge.Lookup): Boolean = synchronized(lock) {
+        eligible() && ownsLookup(lookup)
+    }
+
+    /** Result delivery must still settle an owned lookup whose profile became unsafe. */
+    fun ownsLookup(lookup: Challenge.Lookup): Boolean = synchronized(lock) {
         armed?.let { it.identity == lookup.identity && it.target.url == lookup.url } == true &&
             outstanding == lookup.identity
     }
@@ -163,6 +189,7 @@ internal class ShellBasicAuth(
     private val enabled: () -> Boolean,
     private val client: () -> MyPassClient?,
     private val flow: String,
+    private val eligible: () -> Boolean = { true },
     /** A lookup is starting: give it precedence over form fill and pause the load timer. */
     private val onLookup: () -> Unit,
     /** The lookup ended, whatever its outcome. */
@@ -171,7 +198,7 @@ internal class ShellBasicAuth(
     private val onError: (Int) -> Unit,
     private val onCredential: (BasicAuthGate.Challenge.Lookup, MyPassClient.Outcome.Credential) -> Unit = { _, _ -> },
 ) {
-    val gate = BasicAuthGate()
+    val gate = BasicAuthGate(eligible)
     private val main = Handler(Looper.getMainLooper())
     private var pending: Pending? = null
 
@@ -191,14 +218,19 @@ internal class ShellBasicAuth(
         settle()
     }
 
+    fun started(url: String) {
+        gate.started(url)
+        settle()
+    }
+
     fun disarm() {
         gate.disarm()
         settle()
     }
 
     /** Any thread: `shouldInterceptRequest`. */
-    fun intercepted(url: String) {
-        if (gate.intercepted(url)) main.post(::settle)
+    fun intercepted(url: String, mainFrame: Boolean = true) {
+        if (gate.intercepted(url, mainFrame)) main.post(::settle)
     }
 
     fun challenge(answer: AuthAnswer, host: String?, realm: String?) {
@@ -210,7 +242,10 @@ internal class ShellBasicAuth(
             return
         }
         when (val challenge = gate.challenge(host, realm)) {
-            BasicAuthGate.Challenge.Cancel -> answer.cancel()
+            BasicAuthGate.Challenge.Cancel -> {
+                answer.cancel()
+                settle()
+            }
             BasicAuthGate.Challenge.Rejected -> {
                 answer.cancel()
                 settle()
@@ -232,7 +267,7 @@ internal class ShellBasicAuth(
         val request = Pending(lookup, answer, myPass)
         pending = request
         val launched = myPass.fetch(MyPassClient.Identity(flow, lookup.identity), lookup.url, lookup.realm,
-            isCurrent = { pending === request && gate.isCurrent(lookup) }) { outcome -> complete(request, outcome) }
+            isCurrent = { pending === request && gate.ownsLookup(lookup) }) { outcome -> complete(request, outcome) }
         if (!launched && pending === request) complete(request, MyPassClient.Outcome.Unavailable)
     }
 
@@ -240,12 +275,12 @@ internal class ShellBasicAuth(
         if (pending !== request) return
         pending = null
         onLookupEnded()
+        val current = gate.current?.identity == request.lookup.identity
         if (outcome is MyPassClient.Outcome.Credential && enabled() && gate.supply(request.lookup)) {
             onCredential(request.lookup, outcome)
             request.answer.proceed(String(outcome.username), String(outcome.password))
             return
         }
-        val current = gate.current?.identity == request.lookup.identity
         gate.abandon(request.lookup)
         request.answer.cancel()
         if (current) onError(R.string.shell_auth_unavailable)

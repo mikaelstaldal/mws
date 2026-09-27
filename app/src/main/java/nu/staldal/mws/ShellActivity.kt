@@ -354,10 +354,13 @@ class ShellHolder(
     private val knownSafeGets = mutableSetOf<String>()
     private var formFill: FormFillEngine? = null
     private var formClient: MyPassClient? = null
-    private val basicAuth = ShellBasicAuth(
+    private var basicAuth = newBasicAuth()
+
+    private fun newBasicAuth(eligible: () -> Boolean = { false }) = ShellBasicAuth(
         enabled = { services.compatibility.current().features.basicAuth && closed == null },
         client = { (host as? ShellActivity)?.myPass },
         flow = appId,
+        eligible = eligible,
         onLookup = {
             // A Basic challenge takes precedence over form fill (R§11.1).
             formFill?.invalidate()
@@ -450,6 +453,8 @@ class ShellHolder(
             return
         }
         hasVisiblePaint = false
+        basicAuth.close()
+        basicAuth = newBasicAuth(attached.basicAuthSafe)
         bound = attached
         val app = try {
             services.repository.get(appId)
@@ -630,6 +635,7 @@ class ShellHolder(
     }
 
     private fun installClient(webView: WebView) {
+        val auth = basicAuth
         webView.setDownloadListener { _, _, _, _, _ ->
             if (bound?.webView === webView && closed == null) notice(R.string.shell_download_unsupported)
         }
@@ -644,7 +650,7 @@ class ShellHolder(
             onRequest = { url, get, redirect ->
                 if (bound?.webView === webView) {
                     navigationInFlight = true
-                    if (redirect) basicAuth.redirect(url) else basicAuth.arm(url)
+                    if (redirect) auth.redirect(url) else auth.arm(url)
                     (host as? ShellActivity)?.webPermissions?.close()
                     formFill?.navigate(url)
                     currentUrl = url
@@ -653,7 +659,7 @@ class ShellHolder(
                 }
             },
             onStarted = { url ->
-                if (bound?.webView === webView) basicAuth.disarm()
+                if (bound?.webView === webView) auth.started(url)
                 if (bound?.webView === webView && error == null) {
                     (host as? ShellActivity)?.webPermissions?.close()
                     navigationInFlight = true
@@ -665,7 +671,7 @@ class ShellHolder(
                 }
             },
             onCommit = { url ->
-                if (bound?.webView === webView) basicAuth.disarm()
+                if (bound?.webView === webView) auth.disarm()
                 if (bound?.webView === webView && error == null) {
                     hasVisiblePaint = true
                     webView.setBackgroundColor(Color.WHITE)
@@ -685,13 +691,13 @@ class ShellHolder(
             },
             onFailure = { message ->
                 if (bound?.webView === webView) {
-                    basicAuth.disarm()
+                    auth.disarm()
                     fail(message)
                 }
             },
             onTlsFailure = { url ->
                 if (bound?.webView === webView) {
-                    basicAuth.disarm()
+                    auth.disarm()
                     formFill?.rejectDocument()
                     if (url == currentUrl) fail(R.string.shell_tls_error)
                 }
@@ -699,12 +705,12 @@ class ShellHolder(
             onCancelled = {
                 if (bound?.webView === webView) {
                     navigationInFlight = false
-                    basicAuth.disarm()
+                    auth.disarm()
                 }
             },
-            onIntercept = basicAuth::intercepted,
+            onIntercept = auth::intercepted,
             onAuthRequest = { answer, authHost, realm ->
-                if (bound?.webView === webView) basicAuth.challenge(answer, authHost, realm) else answer.cancel()
+                if (bound?.webView === webView) auth.challenge(answer, authHost, realm) else answer.cancel()
             },
             onRendererGone = { rendererFailed(webView) },
         )
@@ -788,6 +794,8 @@ class ShellHolder(
                     }
                     formFill?.close()
                     formFill = null
+                    basicAuth.close()
+                    basicAuth = newBasicAuth(replacement.basicAuthSafe)
                     bound = replacement
                     old?.let {
                         (it.webView.parent as? ViewGroup)?.removeView(it.webView)
@@ -890,7 +898,7 @@ private class ShellWebViewClient(
     /** A main-frame navigation was cancelled by policy. */
     private val onCancelled: () -> Unit = {},
     /** Called on a background thread for every request, including the main document. */
-    private val onIntercept: (String) -> Unit = {},
+    private val onIntercept: (String, Boolean) -> Unit = { _, _ -> },
     private val onAuthRequest: (AuthAnswer, String?, String?) -> Unit = { answer, _, _ -> answer.cancel() },
     private val onRendererGone: (WebView) -> Boolean = { true },
 ) : WebViewClient() {
@@ -907,7 +915,7 @@ private class ShellWebViewClient(
     }
 
     override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-        onIntercept(request.url.toString())
+        onIntercept(request.url.toString(), request.isForMainFrame)
         val blocked = CleartextRequestBlocker.response(request.url) ?: return null
         if (request.isForMainFrame) {
             val url = request.url.toString()

@@ -8,13 +8,14 @@ internal class DiscoveryBasicAuthentication(
     resume: () -> Unit,
     private val required: () -> Unit,
     private val enabled: () -> Boolean = { true },
+    eligible: () -> Boolean = { true },
 ) : DiscoveryBasicAuth {
     private var retained: MyPassClient.Outcome.Credential? = null
     private var realm: String? = null
     private var closed = false
     private val auth = ShellBasicAuth(
         enabled = { enabled() && !closed && attempt.trigger != DiscoveryTrigger.DEBOUNCE },
-        client = client, flow = "discovery-${attempt.id}",
+        client = client, flow = "discovery-${attempt.id}", eligible = eligible,
         onLookup = pause, onLookupEnded = resume, onError = {
             synchronized(this) {
                 retained?.clear()
@@ -43,7 +44,8 @@ internal class DiscoveryBasicAuthentication(
         }
         else auth.redirect(url)
     }
-    fun intercepted(url: String) = auth.intercepted(url)
+    fun intercepted(url: String, mainFrame: Boolean = true) = auth.intercepted(url, mainFrame)
+    fun started(url: String) = auth.started(url)
     fun documentEnded() = auth.disarm()
     fun challenge(answer: AuthAnswer, host: String?, realm: String?) {
         if (attempt.trigger == DiscoveryTrigger.DEBOUNCE) {

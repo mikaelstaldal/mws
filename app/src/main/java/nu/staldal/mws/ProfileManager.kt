@@ -4,6 +4,10 @@ import android.content.Context
 import android.util.Log
 import kotlinx.coroutines.CancellationException
 import android.webkit.WebView
+import android.webkit.ServiceWorkerClient
+import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.webkit.Profile
 import androidx.webkit.ProfileStore
 import androidx.webkit.WebViewCompat
@@ -51,10 +55,22 @@ interface WebProfileBackend {
 
     /** Applies to the WebView's own profile cookie manager, effective for subsequent requests. */
     fun setThirdPartyCookies(webView: WebView, allow: Boolean)
+
+    /** False after any service-worker request in the profile during this process. */
+    fun basicAuthSafety(webView: WebView): () -> Boolean = { false }
 }
 
 /** The single place where WebViews are constructed and bound (checked by scripts/check-security.py). */
 class AndroidWebProfileBackend : WebProfileBackend {
+    companion object {
+        // Process lifetime, even if services/backend owners are recreated. Main-thread access.
+        private val workerRequests = mutableMapOf<String, AtomicBoolean>()
+    }
+
+    override fun basicAuthSafety(webView: WebView): () -> Boolean {
+        val requested = workerRequests[WebViewCompat.getProfile(webView).name]
+        return { requested?.get() == false }
+    }
     override fun deleteProfile(name: String): Boolean = ProfileStore.getInstance().deleteProfile(name)
 
     override fun profileExists(name: String): Boolean =
@@ -62,6 +78,19 @@ class AndroidWebProfileBackend : WebProfileBackend {
 
     override fun createBoundWebView(context: Context, name: String): WebView {
         check(name != Profile.DEFAULT_PROFILE_NAME)
+        // Install before constructing/loading the first view; retain the latch across view
+        // replacement so an old worker request cannot become eligible in a new shell.
+        if (name !in workerRequests) {
+            val requested = AtomicBoolean(false)
+            val profile = ProfileStore.getInstance().getOrCreateProfile(name)
+            profile.serviceWorkerController.setServiceWorkerClient(object : ServiceWorkerClient() {
+                override fun shouldInterceptRequest(request: WebResourceRequest): WebResourceResponse? {
+                    requested.set(true)
+                    return null
+                }
+            })
+            workerRequests[name] = requested
+        }
         val webView = WebView(context)
         try {
             WebViewCompat.setProfile(webView, name)
@@ -123,7 +152,8 @@ interface AppNativeData {
 }
 
 /** A WebView bound to [profileName]. Release it through [ProfileManager.release]. */
-class BoundWebView internal constructor(val webView: WebView, val profileName: String)
+class BoundWebView internal constructor(val webView: WebView, val profileName: String,
+    internal val basicAuthSafe: () -> Boolean = { false })
 
 /** A never-reused discovery or self-test profile, durably registered before first use. */
 data class DisposableProfile(val profileId: String) {
@@ -619,7 +649,7 @@ class ProfileManager(
     private fun bind(context: Context, name: String): BoundWebView {
         val webView = backend.createBoundWebView(context, name)
         live.getOrPut(name) { mutableListOf() } += webView
-        return BoundWebView(webView, name)
+        return BoundWebView(webView, name, backend.basicAuthSafety(webView))
     }
 
     private suspend fun closeLive(appId: String, names: List<String>) = withContext(main) {

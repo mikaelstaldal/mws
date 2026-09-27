@@ -309,7 +309,9 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 
 - This applies to any origin-server auth challenge the WebView reports; the WebView does not expose the scheme.
 - Reactive only. Credentials are never sent proactively.
-- Credentials are supplied only for a challenge on the current eligible top-level navigation, including its accepted same-policy redirects. Challenges from subresources, iframes or ambiguous situations are cancelled.
+- Credentials are supplied only during the first top-level navigation of a fresh WebView, including its accepted same-origin redirects, before a document commits or a competing request begins. Later links, Back, reload and Retry on the same WebView never restore eligibility. Challenges from subresources, iframes or ambiguous situations are cancelled.
+- A service-worker network request makes the profile ineligible for new Basic-auth lookups for the rest of the process, including replacement WebViews. Existing cached authentication may continue working; it is not a new MyPass lookup.
+- Reopening an existing live shell does not restore eligibility. Closing the shell and launching a fresh one permits another initial attempt only if its profile remains eligible. Unsaved page state and live browsing history are lost on close. A public launch page followed by a protected link cannot initiate Basic auth; configure the protected page as the launch URL when needed.
 - The MyPass lookup uses the exact top-level request URL (after redirects) and the challenge realm. There is no name-based lookup.
 - A returned credential is supplied at most once per navigation, URL and realm. A repeated challenge counts as rejection: it is cancelled and a non-sensitive error is shown.
 - There is no manual fallback. Without a credential, the challenge is cancelled and a non-sensitive "authentication unavailable" error is shown.

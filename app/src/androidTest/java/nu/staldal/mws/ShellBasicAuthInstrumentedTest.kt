@@ -46,6 +46,7 @@ class ShellBasicAuthInstrumentedTest {
     private val requests = CopyOnWriteArrayList<Pair<String, String?>>()
     private val otherRequests = CopyOnWriteArrayList<Pair<String, String?>>()
     private val apps = mutableListOf<String>()
+    private val myPassReady = java.util.concurrent.CountDownLatch(1)
     private var basicAuthProbe = true
     private var diagnosticView: WebView? = null
     private var diagnosticMyPass: FakeMyPass? = null
@@ -64,12 +65,19 @@ class ShellBasicAuthInstrumentedTest {
             val path = request.path ?: ""
             val authorization = request.getHeader("Authorization")
             requests += path to authorization
+            if (path in listOf("/top", "/redirect", "/cross", "/frame-page", "/image-page", "/worker-page")) {
+                check(myPassReady.await(15, java.util.concurrent.TimeUnit.SECONDS))
+            }
             when (path) {
                 "/top" -> if (authorization == AUTHORIZATION) html("<p id=ok>ok</p>") else challenge("Top")
                 "/redirect" -> MockResponse().setResponseCode(302).setHeader("Location", "/top")
                 "/cross" -> MockResponse().setResponseCode(302).setHeader("Location", other.url.resolve("/top").toString())
                 "/frame-page" -> html("<iframe src=\"/protected-frame\"></iframe>")
                 "/image-page" -> html("<img src=\"/protected-image\">")
+                "/worker-page" -> html("<script>navigator.serviceWorker.register('/workers/worker.js')</script>")
+                "/workers/worker.js" -> MockResponse().setHeader("Content-Type", "application/javascript")
+                    .setBody("self.addEventListener('activate', e => e.waitUntil(fetch('/protected-worker')));")
+                "/protected-worker" -> challenge("Worker")
                 "/protected-frame" -> challenge("Frame")
                 "/protected-image" -> challenge("Image")
                 else -> html("<p>app</p>")
@@ -93,6 +101,7 @@ class ShellBasicAuthInstrumentedTest {
     }
 
     @After fun tearDown() {
+        myPassReady.countDown()
         if (!::services.isInitialized) return
         onMain {
             ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
@@ -107,16 +116,14 @@ class ShellBasicAuthInstrumentedTest {
     }
 
     @Test fun topLevelChallengeLooksUpExactUrlAndRealmAndSuppliesOnce() {
-        val (webView, myPass) = openShell()
-        navigate(webView, at("/top"))
+        val (webView, myPass) = openShell(path = "/top")
         await("authenticated document contains ok marker") { evaluate(webView, "document.getElementById('ok') !== null") == "true" }
         assertEquals(listOf(at("/top") to "Top"), myPass.lookups)
         assertEquals(1, requests.count { it == "/top" to AUTHORIZATION })
     }
 
     @Test fun rejectedCredentialIsNotSuppliedAgain() {
-        val (webView, myPass) = openShell(password = "wrong")
-        navigate(webView, at("/top"))
+        val (webView, myPass) = openShell(password = "wrong", path = "/top")
         await("credential rejection produces second /top request") { requests.count { it.first == "/top" } >= 2 }
         SystemClock.sleep(1500)
         assertEquals(1, myPass.lookups.size)
@@ -124,15 +131,13 @@ class ShellBasicAuthInstrumentedTest {
     }
 
     @Test fun sameOriginRedirectIsLookedUpWithTheRedirectedUrl() {
-        val (webView, myPass) = openShell()
-        navigate(webView, at("/redirect"))
+        val (webView, myPass) = openShell(path = "/redirect")
         await("authenticated document contains ok marker") { evaluate(webView, "document.getElementById('ok') !== null") == "true" }
         assertEquals(listOf(at("/top") to "Top"), myPass.lookups)
     }
 
     @Test fun crossOriginRedirectCannotInheritTheNavigation() {
-        val (webView, myPass) = openShell()
-        navigate(webView, at("/cross"))
+        val (webView, myPass) = openShell(path = "/cross")
         await("cross-origin redirect reaches second listener") { otherRequests.isNotEmpty() }
         SystemClock.sleep(1500)
         assertEquals(emptyList<Pair<String, String?>>(), myPass.lookups)
@@ -140,8 +145,7 @@ class ShellBasicAuthInstrumentedTest {
     }
 
     @Test fun iframeChallengeIsCancelledWithoutAnotherNavigation() {
-        val (webView, myPass) = openShell()
-        navigate(webView, at("/frame-page"))
+        val (webView, myPass) = openShell(path = "/frame-page")
         await("iframe request reaches listener") { requests.any { it.first == "/protected-frame" } }
         await("iframe fixture completes") { fixtureDocumentReady(webView, at("/frame-page")) }
         SystemClock.sleep(1500)
@@ -150,8 +154,7 @@ class ShellBasicAuthInstrumentedTest {
     }
 
     @Test fun imageChallengeIsCancelledWithoutAnotherNavigation() {
-        val (webView, myPass) = openShell()
-        navigate(webView, at("/image-page"))
+        val (webView, myPass) = openShell(path = "/image-page")
         await("image request reaches listener") { requests.any { it.first == "/protected-image" } }
         await("image fixture completes") { fixtureDocumentReady(webView, at("/image-page")) }
         SystemClock.sleep(1500)
@@ -161,13 +164,67 @@ class ShellBasicAuthInstrumentedTest {
 
     /** Keep the overlapping case: request arrival is deliberately not challenge completion. */
     @Test fun iframeAndSubresourceChallengesAreCancelled() {
-        val (webView, myPass) = openShell()
-        navigate(webView, at("/frame-page"))
+        val (webView, myPass) = openShell(path = "/frame-page")
         await("iframe request reaches listener") { requests.any { it.first == "/protected-frame" } }
         navigate(webView, at("/image-page"))
         await("image request reaches listener") { requests.any { it.first == "/protected-image" } }
         SystemClock.sleep(1500)
         assertEquals(emptyList<Pair<String, String?>>(), myPass.lookups)
+        assertTrue(requests.all { it.second == null })
+    }
+
+    @Test fun serviceWorkerRequestRetiresEligibilityAcrossViewReplacement() {
+        val (webView, myPass) = openShell(path = "/worker-page")
+        await("worker network request reaches listener") { requests.any { it.first == "/protected-worker" } }
+        val activity = onMain {
+            ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
+                .filterIsInstance<ShellActivity>().first { it.holder()?.bound?.webView === webView }
+        }
+        val bound = onMain { activity.holder()!!.bound!! }
+        assertTrue(!bound.basicAuthSafe())
+        val replacement = runBlocking {
+            (services.profiles.createAppWebView(context, ShellActivity.appIdOf(activity.intent)!!) as AttachResult.Attached).bound
+        }
+        val cancelled = java.util.concurrent.atomic.AtomicBoolean(false)
+        var replacementAuth: ShellBasicAuth? = null
+        try {
+            assertTrue(!replacement.basicAuthSafe())
+            onMain {
+                val auth = ShellBasicAuth({ true }, { activity.myPass }, "worker-replacement",
+                    eligible = replacement.basicAuthSafe, onLookup = {}, onLookupEnded = {}, onError = {})
+                replacementAuth = auth
+                replacement.webView.webViewClient = object : android.webkit.WebViewClient() {
+                    override fun shouldInterceptRequest(view: WebView, request: android.webkit.WebResourceRequest): android.webkit.WebResourceResponse? {
+                        auth.intercepted(request.url.toString(), request.isForMainFrame)
+                        return null
+                    }
+                    override fun onReceivedHttpAuthRequest(view: WebView, handler: android.webkit.HttpAuthHandler,
+                        host: String?, realm: String?) {
+                        auth.challenge(handler.asAnswer(), host, realm)
+                        cancelled.set(true)
+                    }
+                }
+                auth.arm(at("/top"))
+                replacement.webView.loadUrl(at("/top"))
+            }
+            await("replacement's top-level challenge is cancelled") { cancelled.get() }
+        } finally {
+            onMain { replacementAuth?.close() }
+            runBlocking { services.profiles.release(replacement) }
+        }
+        SystemClock.sleep(1500)
+        assertTrue(myPass.lookups.isEmpty())
+        assertTrue(requests.all { it.second == null })
+    }
+
+    @Test fun laterTopLevelChallengeIsCancelledAndReloadDoesNotRearm() {
+        val (webView, myPass) = openShell()
+        navigate(webView, at("/top"))
+        await("later challenge is cancelled") { fixtureDocumentReady(webView, at("/top")) }
+        onMain { webView.reload() }
+        await("reload reaches listener") { requests.count { it.first == "/top" } >= 2 }
+        SystemClock.sleep(1500)
+        assertTrue(myPass.lookups.isEmpty())
         assertTrue(requests.all { it.second == null })
     }
 
@@ -196,9 +253,9 @@ class ShellBasicAuthInstrumentedTest {
         }
     }
 
-    private fun openShell(password: String = "secret"): Pair<WebView, FakeMyPass> {
+    private fun openShell(password: String = "secret", path: String = "/app/"): Pair<WebView, FakeMyPass> {
         val id = UUID.randomUUID().toString()
-        val url = at("/app/")
+        val url = at(path)
         runBlocking {
             services.repository.add(ConfiguredApp(id, "Auth", NameSource.USER_EDITED, url, null, url, url,
                 createdAt = 1, updatedAt = 1))
@@ -214,18 +271,21 @@ class ShellBasicAuthInstrumentedTest {
                     ?.let { activity -> activity.holder()?.bound?.webView?.let { activity to it } }
             }
             diagnosticView = found?.second
-            found != null && onMain { found!!.second.url } == url
+            found != null
         }
         val (activity, webView) = found!!
         diagnosticView = webView
-        await("initial fixture ready: $url") { fixtureDocumentReady(webView, url) }
         val myPass = FakeMyPass(password)
         diagnosticMyPass = myPass
         onMain {
             activity.myPass.close()
             activity.myPass = MyPassClient(activity, availabilityProbe = { true }, registry = myPass)
         }
-        requests.clear()
+        myPassReady.countDown()
+        if (path == "/app/") {
+            await("initial fixture ready: $url") { fixtureDocumentReady(webView, url) }
+            requests.clear()
+        }
         return webView to myPass
     }
 

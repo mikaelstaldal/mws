@@ -106,25 +106,23 @@ internal class BasicAuthProbe(private val context: Context, private val profiles
         val gate = BasicAuthGate()
         gate.arm(FIRST) ?: return false
         var firstMain = false
-        var nextArmed = false
         var nextMain = false
         for (event in events) when (event.kind) {
             "intercept" -> {
-                val disarmed = gate.intercepted(event.url)
+                val disarmed = gate.intercepted(event.url, event.mainFrame)
                 if (event.mainFrame && event.url == FIRST && !firstMain) {
                     // The app's own load must reach the provider with exactly the recorded URL.
                     if (disarmed || gate.current?.documentRequested != true) return false
                     firstMain = true
                 } else if (event.mainFrame && event.url == NEXT) {
-                    // A page-initiated navigation must be armed before its request is dispatched.
-                    if (!nextArmed || disarmed || gate.current?.documentRequested != true) return false
+                    // Later navigation must retain permanent retirement before dispatch.
+                    if (gate.current != null) return false
                     nextMain = true
                 }
             }
             "override" -> if (event.mainFrame && !(event.url == FIRST && !firstMain)) {
                 if (event.url != NEXT || event.redirect) return false
-                gate.arm(event.url) ?: return false
-                nextArmed = true
+                if (gate.arm(event.url) != null) return false
             }
             "commit", "finished" -> {
                 // Commit must not precede the main document's own request.
@@ -132,7 +130,7 @@ internal class BasicAuthProbe(private val context: Context, private val profiles
                 gate.disarm()
             }
         }
-        return firstMain && nextArmed && nextMain
+        return firstMain && nextMain
     }
 
     companion object {

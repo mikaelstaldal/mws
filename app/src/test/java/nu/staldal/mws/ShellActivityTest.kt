@@ -274,7 +274,7 @@ class ShellActivityTest {
         assertTrue(refresh.canChildScrollUp())
     }
 
-    @Test fun explicitReloadPreparesFormFillAndRearmsBasicAuthentication() {
+    @Test fun explicitReloadPreparesFormFillButCannotRearmBasicAuthentication() {
         installMyPass()
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))
@@ -288,8 +288,7 @@ class ShellActivityTest {
         assertTrue(ReflectionHelpers.getField<Boolean>(engine, "prepared"))
         Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
         basicAuth(activity).challenge(Answer(), "example.com", "Private")
-        val lookup = Shadows.shadowOf(activity).nextStartedActivityForResult
-        assertEquals(app.launchUrl, lookup.intent.getStringExtra(MyPassClient.EXTRA_URL))
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
         assertEquals(1, view.reloads)
     }
 
@@ -1243,6 +1242,19 @@ class ShellActivityTest {
         assertEquals(context.getString(R.string.shell_auth_rejected), errorText(activity))
     }
 
+    @Test fun initialPageStartedDoesNotCancelEligibleTopLevelChallenge() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageStarted(view, app.launchUrl, null)
+        client.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
+        basicAuth(activity).challenge(Answer(), "example.com", "Private")
+        assertEquals(app.launchUrl, Shadows.shadowOf(activity).nextStartedActivityForResult
+            .intent.getStringExtra(MyPassClient.EXTRA_URL))
+    }
+
     @Test fun missingMyPassCancelsChallengeAndShowsAuthenticationUnavailable() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))
@@ -1260,18 +1272,15 @@ class ShellActivityTest {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))
         val view = awaitWebView(activity)
-        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
-        assertFalse(Shadows.shadowOf(view).webViewClient.shouldOverrideUrlLoading(view,
-            request("https://example.com/private", "GET")))
-        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view, request("https://example.com/private", "GET"))
+        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
         val answer = Answer()
         basicAuth(activity).challenge(answer, "example.com", "Private")
         val request = Shadows.shadowOf(activity).nextStartedActivityForResult
-        assertEquals("https://example.com/private", request.intent.getStringExtra(MyPassClient.EXTRA_URL))
+        assertEquals(app.launchUrl, request.intent.getStringExtra(MyPassClient.EXTRA_URL))
         Shadows.shadowOf(activity).receiveResult(request.intent, android.app.Activity.RESULT_CANCELED, null)
         ShadowLooper.idleMainLooper()
         assertEquals(listOf("cancel"), answer.calls)
-        assertEquals(context.getString(R.string.shell_auth_unavailable), ShadowToast.getTextOfLatestToast())
+        assertEquals(context.getString(R.string.shell_auth_unavailable), errorText(activity))
     }
 
     @Test fun belowFloorOrFailedProbeCancelsEveryChallengeWithoutMyPass() {
@@ -1302,6 +1311,22 @@ class ShellActivityTest {
         Answer().also { auth.challenge(it, "example.com", "Private"); assertEquals(listOf("cancel"), it.calls) }
         assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
         assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
+    }
+
+    @Test fun staleIframeChallengeCannotUseLaterNavigationEvenAfterItsMainRequest() {
+        installMyPass()
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.shouldInterceptRequest(view, request(app.launchUrl, "GET"))
+        client.shouldInterceptRequest(view, request("https://example.com/frame", "GET", mainFrame = false))
+        assertFalse(client.shouldOverrideUrlLoading(view, request("https://example.com/image-page", "GET")))
+        client.shouldInterceptRequest(view, request("https://example.com/image-page", "GET"))
+        val answer = Answer()
+        basicAuth(activity).challenge(answer, "example.com", "Frame")
+        assertEquals(listOf("cancel"), answer.calls)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
     }
 
     @Test fun sameOriginRedirectIsLookedUpButCrossOriginRedirectCannotInherit() {
@@ -1556,6 +1581,7 @@ class ShellActivityTest {
     }
 
     private class Backend : WebProfileBackend {
+        override fun basicAuthSafety(webView: WebView): () -> Boolean = { true }
         val bound = mutableListOf<String>()
         val deleteCalls = mutableListOf<String>()
         val thirdParty = mutableMapOf<WebView, Boolean>()

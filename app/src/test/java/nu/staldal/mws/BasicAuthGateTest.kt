@@ -9,7 +9,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class BasicAuthGateTest {
-    private val gate = BasicAuthGate()
+    private var gate = BasicAuthGate()
 
     /** Arms and reports the navigation's own main-document request, as the provider does. */
     private fun armed(url: String): BasicAuthGate.Armed? =
@@ -29,6 +29,7 @@ class BasicAuthGateTest {
 
     @Test fun recordsEffectivePortAndIpv6Host() {
         assertEquals(8443, armed("https://example.com:8443/")!!.target.port)
+        gate = BasicAuthGate()
         val armed = armed("https://[::1]:8443/x")!!
         assertEquals("::1", armed.target.host)
         assertEquals(8443, armed.target.port)
@@ -69,10 +70,12 @@ class BasicAuthGateTest {
         assertEquals(Challenge.Cancel, gate.challenge("auth.example.com", "Private"))
         assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
 
+        gate = BasicAuthGate()
         armed("https://example.com/start")
         assertFalse(gate.redirect("https://example.com:8443/start"))
         assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
 
+        gate = BasicAuthGate()
         armed("https://example.com/start")
         assertFalse(gate.redirect("http://example.com/start"))
         assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
@@ -94,6 +97,7 @@ class BasicAuthGateTest {
         assertTrue(gate.intercepted("https://example.com/frame"))
         assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
 
+        gate = BasicAuthGate()
         armed("https://example.com/app")
         assertTrue(gate.intercepted("https://cdn.example/lib.js"))
         assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
@@ -141,8 +145,8 @@ class BasicAuthGateTest {
         armed("https://example.com/app")
         assertFalse(gate.isCurrent(first))
         assertFalse(gate.supply(first))
-        // The new identity starts with nothing supplied.
-        assertTrue(gate.challenge("example.com", "Private") is Challenge.Lookup)
+        // A new navigation cannot erase the old request risk.
+        assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
     }
 
     @Test fun challengeBeforeTheNavigationsOwnRequestIsCancelled() {
@@ -160,4 +164,59 @@ class BasicAuthGateTest {
         assertFalse(gate.isCurrent(first))
         assertTrue(gate.challenge("example.com", "Private") is Challenge.Lookup)
     }
+    @Test fun oldIframeChallengeAfterNewMainDocumentNeverLooksUp() {
+        armed("https://example.com/frame-page")
+        gate.intercepted("https://example.com/protected-frame", false)
+        assertNull(gate.arm("https://example.com/image-page"))
+        gate.intercepted("https://example.com/image-page")
+        assertEquals(Challenge.Cancel, gate.challenge("example.com", "Frame"))
+    }
+
+    @Test fun commitReloadAndRetryCannotRestoreEligibilityButNewViewCan() {
+        armed("https://example.com/public")
+        gate.disarm()
+        repeat(3) {
+            assertNull(gate.arm("https://example.com/private"))
+            gate.intercepted("https://example.com/private")
+            assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
+        }
+        gate = BasicAuthGate()
+        assertNotNull(armed("https://example.com/private"))
+        assertTrue(gate.challenge("example.com", "Private") is Challenge.Lookup)
+    }
+
+    @Test fun iframeWithExactDocumentUrlCannotPassAsMainDocument() {
+        gate.arm("https://example.com/app")
+        assertTrue(gate.intercepted("https://example.com/app", false))
+        assertEquals(Challenge.Cancel, gate.challenge("example.com", "Frame"))
+    }
+
+    @Test fun workerRiskCancelsChallengeAndOutstandingResult() {
+        var safe = true
+        gate = BasicAuthGate { safe }
+        armed("https://example.com/app")
+        val first = lookup()
+        safe = false
+        assertFalse(gate.isCurrent(first))
+        assertTrue(gate.ownsLookup(first))
+        assertFalse(gate.supply(first))
+        assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
+        gate = BasicAuthGate { safe }
+        assertNull(gate.arm("https://example.com/app"))
+    }
+
+    @Test fun sameUrlPageInitiatedReloadBeforeCommitCannotStayEligible() {
+        gate.arm("https://example.com/app")
+        assertFalse(gate.started("https://example.com/app"))
+        gate.intercepted("https://example.com/app", true)
+        assertTrue(gate.started("https://example.com/app"))
+        assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
+    }
+
+    @Test fun pageStartedAfterMainRequestRetiresWithoutWaitingForVisiblePaint() {
+        armed("https://example.com/app")
+        assertTrue(gate.started("https://example.com/app"))
+        assertEquals(Challenge.Cancel, gate.challenge("example.com", "Private"))
+    }
+
 }

@@ -37,7 +37,9 @@ Existing packaged coverage:
 | Pre-dispatch popup routing | Strict runtime probe and trusted listener with zero destination requests |
 | Attached disposable discovery and superseded callbacks | `DiscoverySessionInstrumentedTest` |
 
-The shell auth tests include isolated iframe/image challenges and an overlapping
+The shell auth tests require initial top-level authentication and redirects, later
+top-level/reload refusal, service-worker retirement across view replacement,
+isolated iframe/image challenges and an overlapping
 iframe-to-image navigation case. Keep the overlapping case in qualification:
 waiting for the old challenge to finish would hide the provider's missing request
 identity. A lookup for the new page with the old iframe's realm is a failure.

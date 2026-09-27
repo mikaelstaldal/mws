@@ -179,7 +179,7 @@ class DiscoverySession(
                     { pauseForMyPass(id) }, { resumeFromMyPass(id) }, {
                         authenticationRequired = true
                         onAuthenticationRequired()
-                    }, authEnabled).also { it.arm() }
+                    }, authEnabled, current.basicAuthSafe).also { it.arm() }
                 state.start(clock())
                 scheduleTimer()
                 webView.loadUrl(url.serialized)
@@ -208,7 +208,10 @@ class DiscoverySession(
         override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
             if (id != generation) return true
             if (UrlPolicy.parseHttps(request.url.toString()) != null) {
-                if (request.isForMainFrame) authentication?.redirect(request.url.toString())
+                if (request.isForMainFrame) {
+                    if (request.isRedirect) authentication?.redirect(request.url.toString())
+                    else authentication?.documentEnded()
+                }
                 return false
             }
             if (request.isForMainFrame) failDocument(id, DiscoveryDocumentFailure.HTTPS_REQUIRED)
@@ -216,7 +219,7 @@ class DiscoverySession(
         }
 
         override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
-            if (id == generation) authentication?.intercepted(request.url.toString())
+            if (id == generation) authentication?.intercepted(request.url.toString(), request.isForMainFrame)
             val blocked = CleartextRequestBlocker.response(request.url) ?: return null
             if (request.isForMainFrame) handler.post {
                 if (id == generation && bound?.webView === view)
@@ -234,7 +237,7 @@ class DiscoverySession(
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             identity.started()
             mainFrameUrl = url
-            if (id == generation) authentication?.redirect(url)
+            if (id == generation) authentication?.started(url)
             if (id == generation && UrlPolicy.parseHttps(url) == null)
                 failDocument(id, DiscoveryDocumentFailure.HTTPS_REQUIRED)
         }

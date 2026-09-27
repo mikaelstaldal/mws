@@ -119,4 +119,35 @@ class DiscoveryBasicAuthenticationTest {
         assertEquals(0, lookups)
     }
 
+    @Test fun profileBecomingUnsafeWhileMyPassIsOpenCancelsAndResumes() {
+        val activity = org.robolectric.Robolectric.buildActivity(androidx.activity.ComponentActivity::class.java).setup().get()
+        var requestCode = 0
+        val registry = object : androidx.activity.result.ActivityResultRegistry() {
+            override fun <I, O> onLaunch(code: Int,
+                contract: androidx.activity.result.contract.ActivityResultContract<I, O>, input: I,
+                options: androidx.core.app.ActivityOptionsCompat?) { requestCode = code }
+        }
+        val client = MyPassClient(activity, { true }, registry = registry)
+        var safe = true
+        var paused = false
+        var error = 0
+        val auth = ShellBasicAuth({ true }, { client }, "worker-risk", eligible = { safe },
+            onLookup = { paused = true }, onLookupEnded = { paused = false }, onError = { error = it })
+        auth.arm("https://example.com/start")
+        auth.intercepted("https://example.com/start", true)
+        val answer = Answer()
+        auth.challenge(answer, "example.com", "Private")
+        assertTrue(paused)
+        safe = false
+        registry.dispatchResult(requestCode, android.app.Activity.RESULT_OK, android.content.Intent()
+            .putExtra(MyPassClient.EXTRA_RESULT_USERNAME, "user")
+            .putExtra(MyPassClient.EXTRA_RESULT_PASSWORD, "secret"))
+        assertTrue(answer.cancelled)
+        assertFalse(paused)
+        // A retired profile produces no credential and no stuck pending auth operation.
+        assertEquals(R.string.shell_auth_unavailable, error)
+        auth.close()
+        client.close()
+    }
+
 }

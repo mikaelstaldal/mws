@@ -6,7 +6,7 @@ Run on a supported provider with a configured HTTPS app containing a long page a
 2. Scroll down, then drag downward. Verify the page scrolls normally without reloading. A gesture starting below the top must not become a refresh when it reaches the top; begin a new gesture there.
 3. At the top, try an upward drag, a horizontal drag, a short downward drag, and a cancelled gesture. Verify none reloads.
 4. Complete a form-fill attempt, then refresh. Verify the reloaded document permits a fresh attempt and stale credential results cannot fill it.
-5. For an HTTP Basic-auth site, refresh and verify a new eligible challenge can look up the exact current URL through MyPass.
+5. For an HTTP Basic-auth site, refresh and verify no new MyPass Basic-auth lookup is initiated. Cached authentication may continue to work; a new challenge is cancelled.
 6. Verify refresh is unavailable during initial loading, on an error overlay, and during Retry recovery. Rotate a loaded shell and verify pull-to-refresh still works without an automatic reload.
 
-JVM coverage in `ShellActivityTest` verifies scroll-top gating, gesture interception, reload dispatch, form-fill preparation, and Basic-auth rearming. Actual WebView scrolling and provider/network behavior require this device pass.
+JVM coverage in `ShellActivityTest` verifies scroll-top gating, gesture interception, reload dispatch, form-fill preparation, and Basic-auth retirement on reload. Actual WebView scrolling and provider/network behavior require this device pass.
