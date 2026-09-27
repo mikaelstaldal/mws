@@ -44,6 +44,7 @@ class ShellNavigationInstrumentedTest {
     private val requestedPaths = mutableListOf<String>()
     private var monitor: Instrumentation.ActivityMonitor? = null
     private val apps = mutableListOf<String>()
+    private var diagnosticView: WebView? = null
 
     @Before fun setUp() {
         val snapshot = AndroidProviderSnapshotSource(context).snapshot()
@@ -64,7 +65,7 @@ class ShellNavigationInstrumentedTest {
                 "/download" -> MockResponse().setHeader("Content-Type", "application/octet-stream")
                     .setHeader("Content-Disposition", "attachment; filename=a.bin").setBody("x")
                 else -> MockResponse().setHeader("Content-Type", "text/html").setBody("""
-                    <html><body>
+                    <html><body><span id="fixture-ready"></span>
                     <form id="get" method="get" action="$http"><input name="q" value="1"></form>
                     <form id="post" method="post" action="$http"><input name="q" value="1"></form>
                     </body></html>""".trimIndent())
@@ -110,7 +111,7 @@ class ShellNavigationInstrumentedTest {
             "document.getElementById('post').submit()", "location.href = '${at("/redirect")}'",
             "window.open('$http')")) {
             if (onMain { webView.url } != page) onMain { webView.loadUrl(page) }
-            await { onMain { webView.url } == page }
+            await("fixture ready after reset: $page") { fixtureDocumentReady(webView, page) }
             evaluate(webView, script)
             SystemClock.sleep(1500)
             assertEquals(script, 0, cleartextConnections.get())
@@ -135,9 +136,9 @@ class ShellNavigationInstrumentedTest {
         monitor = instrumentation.addMonitor(null as String?, null, true)
         val other = at("/elsewhere")
         evaluate(webView, "location.href = '$other'")
-        await { onMain { webView.url } == other }
+        await("out-of-scope fixture ready: $other") { fixtureDocumentReady(webView, other) }
         evaluate(webView, "location.href = '${at("/download")}'")
-        await { synchronized(requestedPaths) { "/download" in requestedPaths } }
+        await("download request observed") { synchronized(requestedPaths) { "/download" in requestedPaths } }
         SystemClock.sleep(500)
         assertEquals(0, monitor!!.hits)
         assertFalse(activity.isFinishing)
@@ -153,15 +154,18 @@ class ShellNavigationInstrumentedTest {
         apps += id
         context.startActivity(ShellActivity.intent(context, id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         var found: Pair<ShellActivity, WebView>? = null
-        await {
+        await("shell attached at initial URL: $url") {
             found = onMain {
                 ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
                     .filterIsInstance<ShellActivity>()
                     .firstOrNull { ShellActivity.appIdOf(it.intent) == id }
                     ?.let { activity -> activity.holder()?.bound?.webView?.let { activity to it } }
             }
+            diagnosticView = found?.second
             found != null && onMain { found!!.second.url } == url
         }
+        diagnosticView = found!!.second
+        await("initial fixture ready: $url") { fixtureDocumentReady(found!!.second, url) }
         return found!!
     }
 
@@ -179,12 +183,15 @@ class ShellNavigationInstrumentedTest {
         return result.get().getOrThrow()
     }
 
-    private fun await(condition: () -> Boolean) {
+    private fun await(description: String = "shell attached at initial URL", condition: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + 15_000
         while (SystemClock.uptimeMillis() < deadline) {
             if (condition()) return
             SystemClock.sleep(50)
         }
-        fail("Condition not reached")
+        fail("Timed out waiting for $description; " +
+            "page=${diagnosticView?.let(::fixtureDocumentState)}; " +
+            "requests=${synchronized(requestedPaths) { requestedPaths.toList() }}; " +
+            "cleartextConnections=${cleartextConnections.get()}; intentHits=${monitor?.hits}")
     }
 }

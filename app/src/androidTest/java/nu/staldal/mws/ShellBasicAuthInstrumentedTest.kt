@@ -47,6 +47,8 @@ class ShellBasicAuthInstrumentedTest {
     private val otherRequests = CopyOnWriteArrayList<Pair<String, String?>>()
     private val apps = mutableListOf<String>()
     private var basicAuthProbe = true
+    private var diagnosticView: WebView? = null
+    private var diagnosticMyPass: FakeMyPass? = null
 
     @Before fun setUp() {
         val snapshot = AndroidProviderSnapshotSource(context).snapshot()
@@ -107,7 +109,7 @@ class ShellBasicAuthInstrumentedTest {
     @Test fun topLevelChallengeLooksUpExactUrlAndRealmAndSuppliesOnce() {
         val (webView, myPass) = openShell()
         navigate(webView, at("/top"))
-        await { evaluate(webView, "document.getElementById('ok') !== null") == "true" }
+        await("authenticated document contains ok marker") { evaluate(webView, "document.getElementById('ok') !== null") == "true" }
         assertEquals(listOf(at("/top") to "Top"), myPass.lookups)
         assertEquals(1, requests.count { it == "/top" to AUTHORIZATION })
     }
@@ -115,7 +117,7 @@ class ShellBasicAuthInstrumentedTest {
     @Test fun rejectedCredentialIsNotSuppliedAgain() {
         val (webView, myPass) = openShell(password = "wrong")
         navigate(webView, at("/top"))
-        await { requests.count { it.first == "/top" } >= 2 }
+        await("credential rejection produces second /top request") { requests.count { it.first == "/top" } >= 2 }
         SystemClock.sleep(1500)
         assertEquals(1, myPass.lookups.size)
         assertEquals(1, requests.count { it.first == "/top" && it.second != null })
@@ -124,14 +126,14 @@ class ShellBasicAuthInstrumentedTest {
     @Test fun sameOriginRedirectIsLookedUpWithTheRedirectedUrl() {
         val (webView, myPass) = openShell()
         navigate(webView, at("/redirect"))
-        await { evaluate(webView, "document.getElementById('ok') !== null") == "true" }
+        await("authenticated document contains ok marker") { evaluate(webView, "document.getElementById('ok') !== null") == "true" }
         assertEquals(listOf(at("/top") to "Top"), myPass.lookups)
     }
 
     @Test fun crossOriginRedirectCannotInheritTheNavigation() {
         val (webView, myPass) = openShell()
         navigate(webView, at("/cross"))
-        await { otherRequests.isNotEmpty() }
+        await("cross-origin redirect reaches second listener") { otherRequests.isNotEmpty() }
         SystemClock.sleep(1500)
         assertEquals(emptyList<Pair<String, String?>>(), myPass.lookups)
         assertTrue(otherRequests.all { it.second == null })
@@ -140,9 +142,9 @@ class ShellBasicAuthInstrumentedTest {
     @Test fun iframeAndSubresourceChallengesAreCancelled() {
         val (webView, myPass) = openShell()
         navigate(webView, at("/frame-page"))
-        await { requests.any { it.first == "/protected-frame" } }
+        await("iframe request reaches listener") { requests.any { it.first == "/protected-frame" } }
         navigate(webView, at("/image-page"))
-        await { requests.any { it.first == "/protected-image" } }
+        await("image request reaches listener") { requests.any { it.first == "/protected-image" } }
         SystemClock.sleep(1500)
         assertEquals(emptyList<Pair<String, String?>>(), myPass.lookups)
         assertTrue(requests.all { it.second == null })
@@ -152,7 +154,7 @@ class ShellBasicAuthInstrumentedTest {
         basicAuthProbe = false
         val (webView, myPass) = openShell()
         navigate(webView, at("/top"))
-        await { requests.any { it.first == "/top" } }
+        await("unauthenticated /top request reaches listener") { requests.any { it.first == "/top" } }
         SystemClock.sleep(1500)
         assertEquals(emptyList<Pair<String, String?>>(), myPass.lookups)
         assertTrue(requests.all { it.second == null })
@@ -183,17 +185,21 @@ class ShellBasicAuthInstrumentedTest {
         apps += id
         context.startActivity(ShellActivity.intent(context, id).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         var found: Pair<ShellActivity, WebView>? = null
-        await {
+        await("shell attached at initial URL: $url") {
             found = onMain {
                 ActivityLifecycleMonitorRegistry.getInstance().getActivitiesInStage(Stage.RESUMED)
                     .filterIsInstance<ShellActivity>()
                     .firstOrNull { ShellActivity.appIdOf(it.intent) == id }
                     ?.let { activity -> activity.holder()?.bound?.webView?.let { activity to it } }
             }
+            diagnosticView = found?.second
             found != null && onMain { found!!.second.url } == url
         }
         val (activity, webView) = found!!
+        diagnosticView = webView
+        await("initial fixture ready: $url") { fixtureDocumentReady(webView, url) }
         val myPass = FakeMyPass(password)
+        diagnosticMyPass = myPass
         onMain {
             activity.myPass.close()
             activity.myPass = MyPassClient(activity, availabilityProbe = { true }, registry = myPass)
@@ -217,11 +223,11 @@ class ShellBasicAuthInstrumentedTest {
     private fun at(path: String) = server.url.resolve(path)!!.toString()
 
     private fun html(body: String) =
-        MockResponse().setHeader("Content-Type", "text/html").setBody("<html><body>$body</body></html>")
+        MockResponse().setHeader("Content-Type", "text/html").setBody("<html><body><span id=fixture-ready></span>$body</body></html>")
 
     private fun challenge(realm: String) = MockResponse().setResponseCode(401)
         .setHeader("WWW-Authenticate", "Basic realm=\"$realm\"")
-        .setHeader("Content-Type", "text/html").setBody("<html><body>denied</body></html>")
+        .setHeader("Content-Type", "text/html").setBody("<html><body><span id=fixture-ready></span>denied</body></html>")
 
     private fun ShellActivity.holder(): ShellHolder? =
         ShellActivity::class.java.getDeclaredField("holder").apply { isAccessible = true }
@@ -233,13 +239,17 @@ class ShellBasicAuthInstrumentedTest {
         return result.get().getOrThrow()
     }
 
-    private fun await(condition: () -> Boolean) {
+    private fun await(description: String = "expected auth response or request", condition: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + 15_000
         while (SystemClock.uptimeMillis() < deadline) {
             if (condition()) return
             SystemClock.sleep(50)
         }
-        fail("Condition not reached")
+        fail("Timed out waiting for $description; " +
+            "page=${diagnosticView?.let(::fixtureDocumentState)}; " +
+            "requests=${requests.map { (path, auth) -> path to (auth != null) }}; " +
+            "otherRequests=${otherRequests.map { (path, auth) -> path to (auth != null) }}; " +
+            "lookups=${diagnosticMyPass?.lookups}; basicAuthProbe=$basicAuthProbe")
     }
 
     private companion object {
