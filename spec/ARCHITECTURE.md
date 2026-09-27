@@ -245,7 +245,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 
 - Cookies are read and written only through the session's disposable-profile adapter, using the full request/response context (URL, top-level site, request role, credentials mode, partitioning). `Set-Cookie` is applied before following a redirect or issuing a later fetch. This is enabled only when the compatibility suite proves both full-context evaluation and disposable-profile scoping. **Otherwise, as the required version-1 fallback, all four classes are credentialless, `Set-Cookie` is ignored, and the UI warns that authenticated metadata may be unavailable.**
 - **Documented deviation**: the native fetch does not enforce the document's Content Security Policy. Fetched bytes go only to the native parser, no script is executed, and no state is transferred.
-- `DiscoveryBasicAuthentication` owns the attempt’s navigation gate, MyPass timer pause/resume and a wipeable credential copy. Focus loss restarts a debounce attempt that encountered an eligible challenge so that authentication becomes eligible; ending the document disarms the gate, while ending the attempt also wipes the native-fetch copy. As with the shell gate (§11.1), providers expose no challenge request identity: any non-document interception disarms the gate, and same-host ambiguity is bounded by one-shot supply.
+- `DiscoveryBasicAuthentication` owns the attempt’s navigation gate, MyPass timer pause/resume and a wipeable credential copy. Focus loss restarts a debounce attempt that encountered an eligible challenge so that authentication becomes eligible; ending the document disarms the gate, while ending the attempt also wipes the native-fetch copy. As with the shell gate (§11), providers expose no challenge request identity: any non-document interception disarms the gate, but one-shot supply cannot establish request identity. The shell overlap failure and the remaining discovery qualification limits are described in §11.1.
 - Discovery Basic auth (see R§7.4): the WebView answers the top-level challenge after the origin check against the typed configured URL. The native client may answer a Basic-scheme `401` for a same-origin, same-realm resource with the already-returned credential, at most once per request and never after a cross-origin redirect. Proxy-auth challenges are always cancelled.
 
 ### 8.5 Stage results and draft state
@@ -345,7 +345,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
   - a terminal error;
   - cancellation;
   - any `shouldInterceptRequest` whose canonical URL is not the recorded main-document URL (the conservative "a subresource has begun" signal).
-- In `onReceivedHttpAuthRequest`, handle the challenge only if exactly one gate is armed, the navigation's own main-document request has already been reported to `shouldInterceptRequest`, and the callback host equals the recorded host. Scheme and port come from the recorded navigation. Otherwise cancel. The main-document requirement rejects challenges from requests the previous page already had in flight when the gate was armed. The provider exposes no request identity or port in the challenge, so an old-page request whose challenge arrives after the new main-document request, on the same host, cannot be told apart; it is bounded by the one-shot supply and by the compatibility suite.
+- In `onReceivedHttpAuthRequest`, handle the challenge only if exactly one gate is armed, the navigation's own main-document request has already been reported to `shouldInterceptRequest`, and the callback host equals the recorded host. Scheme and port come from the recorded navigation. Otherwise cancel. The main-document requirement rejects challenges from requests the previous page already had in flight when the gate was armed. The provider exposes no request identity or port in the challenge, so an old-page request whose challenge arrives after the new main-document request, on the same host, cannot be told apart; one-shot supply does not prevent the first wrong lookup, and a failing compatibility case blocks qualification (see §11.1).
 - An accepted redirect continuation (a main-frame `isRedirect` request in `shouldOverrideUrlLoading` that passes the navigation policy) replaces the recorded URL when its scheme, host and port equal the recorded ones. A cross-origin redirect disarms the gate, so a credential never follows it, not even through a fresh lookup. An unrelated navigation replaces the identity. Ambiguous sequences fail closed: a second challenge while a lookup is outstanding is cancelled, and a redirect while a lookup is outstanding disarms.
 - The credential is supplied once per (identity, URL, realm) via `HttpAuthHandler.proceed`. Repeats are cancelled. The provider's in-memory per-profile HTTP-auth cache is accepted; `WebViewDatabase` HTTP-auth persistence is never used.
 - Proactive `Authorization` headers are never used, because custom-header propagation across redirects cannot guarantee cross-origin non-disclosure.
@@ -353,6 +353,66 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 - Enabled only when the provider is at or above its floor and the self-test Basic-auth probe passed; otherwise every challenge is cancelled without a MyPass request.
 - `BasicAuthGate` is the pure, thread-safe gate; `ShellBasicAuth` owns the MyPass lookup and is the only code allowed to answer an `HttpAuthHandler` (enforced by `scripts/check-security.py`).
 - `BasicAuthProbe` loads a network-blocked synthetic HTTPS page and replays the provider's callbacks through the production gate: the app's own load reaches `shouldInterceptRequest` with the exact recorded URL before commit, subresource and iframe requests are reported as non-main-frame requests and disarm it, and a page-initiated main-frame navigation reaches `shouldOverrideUrlLoading` before its request. Challenge delivery needs a real server and is covered per floor version by the compatibility suite (§15).
+
+### 11.1 Open request-correlation decision (mws-xv3vu4)
+
+The existing gate is insufficient for overlapping navigations. On Samsung Galaxy
+S25 SM-S931B, Android 16/API 36.1, WebView 153.0.8010.36, the device reports a
+MyPass lookup for `/image-page` with the previous iframe's realm `Frame`.
+Isolated iframe and image cases pass. This violates lookup attribution in R§17 criteria 8 and 25 and risks violating criterion 11;
+the affected provider must not be qualified with Basic auth enabled.
+
+The callback [Android API contract](https://developer.android.com/reference/android/webkit/WebViewClient#onReceivedHttpAuthRequest(android.webkit.WebView,%20android.webkit.HttpAuthHandler,%20java.lang.String,%20java.lang.String))
+provides a WebView, handler, host and realm, without request URL, frame identity
+or navigation identity. These two traces are indistinguishable to the gate:
+
+1. Old iframe request; arm a new same-host navigation; intercept its main
+   document; receive the old iframe's host/realm challenge.
+2. Old iframe request; arm the same new navigation; intercept its main
+   document; receive a legitimate new top-level challenge with that host/realm.
+
+The callback also omits the port: same-host challenges from another port cannot
+be distinguished. Competing sources such as service-worker requests need separate
+coverage; the WebView request callback is not a complete transport observer.
+Discovery uses an attempt-owned fresh WebView, so the specific old-document trace
+is not established there; competing requests in that instance still need proof.
+
+The gate's new UUID identifies a lookup after attribution, not the network
+request. One-shot supply limits repetitions but does not prevent the first wrong
+lookup. Commit, load completion, stopLoading, elapsed time, and an additional
+native preflight cannot prove which request the handler will answer. The runtime
+synthetic probe does not deliver real authentication challenges and therefore
+cannot establish this correlation guarantee.
+
+A product/design decision is required before implementation:
+
+- **Conservative eligibility:** permanently cancel authentication after a WebView
+  has dispatched potentially competing requests; reset eligibility only with a
+  new WebView and reject callbacks from the retired instance. This prevents
+  new MyPass challenge handling during later navigations (cached authentication
+  may still work),
+  and needs an explicit R§11.2/R§17 behavior change. A simple per-host quarantine
+  is insufficient unless all competing request sources and host reuse are covered.
+- **Request-owned transport:** move top-level authentication into a transport
+  that exposes the challenged request identity. This is an architectural redesign
+  requiring explicit decisions for cookies, redirects, POST/body handling,
+  service workers, caching, document origin and WebView history. A native probe
+  followed by supplying a credential to the ambiguous WebView handler is unsafe.
+  Intercepted GET responses may retain WebView history, but POST bodies and
+  redirects need special handling; keeping credentials out of the WebView also
+  requires a policy for protected subresources and the absent HTTP-auth cache.
+- **Fresh WebView for eligible navigation:** retire the old instance before
+  dispatch and bind callbacks to the new instance. This needs a design for Back,
+  reload/POST semantics and live page state (R§9.2), plus proof that competing
+  requests in the new instance cannot be misattributed. Replacing every view with
+  loadUrl is not equivalent to preserving WebView history or reload semantics.
+  saveState/restoreState may transfer the back/forward list but requires validation
+  of POST entries and does not preserve the live document.
+
+No option is approved here. Existing production behavior is unchanged, the
+failure remains open, and the overlapping device regression remains mandatory.
+Any chosen solution must demonstrate zero stale MyPass lookups and no MyPass credential supplied to a non-top-level
+challenge (separate from the provider authentication cache accepted by R§11.1) while retaining the explicitly agreed top-level behavior.
 
 ## 12. Form-fill transport
 
