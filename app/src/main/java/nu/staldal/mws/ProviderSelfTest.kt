@@ -19,7 +19,7 @@ import kotlin.coroutines.resume
 private const val PROBE_URL = "https://mws-self-test.invalid/probe"
 private const val MARKER = "mws-self-test-marker"
 private const val COOKIE_MARKER = "mws_probe=present"
-private const val SUITE_REVISION = "suite-revision-6"
+private const val SUITE_REVISION = "suite-revision-7"
 
 /** No URLs or credentials are persisted. Absent feature keys fail closed. */
 internal object SelfTestEncoding {

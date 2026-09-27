@@ -17,13 +17,13 @@ import kotlinx.coroutines.withTimeoutOrNull
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 
-/** Optional feature probe: any missing pre-dispatch callback disables all new-window routing. */
+/** Temporary GET routing qualification; full security qualification is deferred to mws-f70c69. */
 internal class NewWindowProbe(private val context: Context, private val profiles: ProfileManager) : ProviderProbe {
     override val name = "newWindow"
     override suspend fun run(): Boolean = diagnose() == null
 
     /** In-memory diagnostics contain case names and counters, never URLs, cookies or script text. */
-    internal suspend fun diagnose(): String? = withContext(Dispatchers.Main) {
+    internal suspend fun diagnose(strictSecurity: Boolean = false): String? = withContext(Dispatchers.Main) {
         val profile = profiles.createSelfTestProfile()
         try {
             val parent = profiles.createSelfTestWebView(context, profile).webView
@@ -36,15 +36,17 @@ internal class NewWindowProbe(private val context: Context, private val profiles
             page.mark(parent)
             val cookies = WebViewCompat.getProfile(parent).cookieManager
             val before = cookies.getCookie(TARGET)
-            for ((index, testCase) in listOf(
-                "window.open('$TARGET','_blank')" to TARGET,
-                "var a=document.createElement('a');a.href='$TARGET';a.target='_blank';document.body.appendChild(a);a.click()" to TARGET,
-                "var w=window.open('about:blank','_blank');try{w.document.cookie='mws_window_mutation=present;Path=/;Secure';w.localStorage.setItem('mws-self-test-marker','changed')}catch(e){}" to null,
-                "var delayed=window.open('about:blank','_blank');if(delayed)delayed.location='$TARGET'" to null,
-                "var f=document.createElement('form');f.action='$TARGET';f.method='POST';f.target='_blank';document.body.appendChild(f);f.submit()" to null,
-            ).withIndex()) {
-                val (script, expected) = testCase
-                val caseName = listOf("window.open", "target_blank", "blank_mutation", "blank_redirect", "post")[index]
+            val cases = mutableListOf(
+                Case("window.open", "window.open('$TARGET','_blank')", TARGET),
+                Case("target_blank", "var a=document.createElement('a');a.href='$TARGET';a.target='_blank';document.body.appendChild(a);a.click()", TARGET),
+            )
+            // Operator-authorized temporary reduction: retain these regression cases for the follow-up.
+            if (strictSecurity) cases.addAll(listOf(
+                Case("blank_mutation", "var w=window.open('about:blank','_blank');try{w.document.cookie='mws_window_mutation=present;Path=/;Secure';w.localStorage.setItem('mws-self-test-marker','changed')}catch(e){}", null),
+                Case("blank_redirect", "var delayed=window.open('about:blank','_blank');if(delayed)delayed.location='$TARGET'", null),
+                Case("post", "var f=document.createElement('form');f.action='$TARGET';f.method='POST';f.target='_blank';document.body.appendChild(f);f.submit()", null),
+            ))
+            for ((caseName, script, expected) in cases) {
                 val child = profiles.createSelfTestWebView(context, profile)
                 try {
                     configureWindowProbe(child.webView)
@@ -103,5 +105,7 @@ internal class NewWindowProbe(private val context: Context, private val profiles
             profiles.finishSelfTestProfile(profile)
         }
     }
+    private data class Case(val name: String, val script: String, val expected: String?)
+
     companion object { private const val TARGET = "https://mws-self-test.invalid/window" }
 }

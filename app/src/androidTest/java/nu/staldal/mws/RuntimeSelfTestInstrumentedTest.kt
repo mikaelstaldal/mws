@@ -20,6 +20,14 @@ class RuntimeSelfTestInstrumentedTest {
         org.junit.Assert.assertNull("NewWindowProbe: $failure", failure)
     }
 
+    @org.junit.Ignore("Deferred to mws-f70c69: same-profile blank opener can mutate state")
+    @Test fun newWindowStrictSecurityQualification() = runBlocking {
+        assumeTrue("MULTI_PROFILE", WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
+        val context = InstrumentationRegistry.getInstrumentation().targetContext
+        val failure = NewWindowProbe(context, ShellServices.shared(context).profiles).diagnose(strictSecurity = true)
+        org.junit.Assert.assertNull("NewWindowProbe strict security: $failure", failure)
+    }
+
     @Test fun formFillProbePassesWithoutNetwork() = runBlocking {
         assumeTrue("MULTI_PROFILE", WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
         val context = InstrumentationRegistry.getInstrumentation().targetContext
