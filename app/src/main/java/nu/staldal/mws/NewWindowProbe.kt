@@ -20,7 +20,10 @@ import kotlin.coroutines.resume
 /** Optional feature probe: any missing pre-dispatch callback disables all new-window routing. */
 internal class NewWindowProbe(private val context: Context, private val profiles: ProfileManager) : ProviderProbe {
     override val name = "newWindow"
-    override suspend fun run(): Boolean = withContext(Dispatchers.Main) {
+    override suspend fun run(): Boolean = diagnose() == null
+
+    /** In-memory diagnostics contain case names and counters, never URLs, cookies or script text. */
+    internal suspend fun diagnose(): String? = withContext(Dispatchers.Main) {
         val profile = profiles.createSelfTestProfile()
         try {
             val parent = profiles.createSelfTestWebView(context, profile).webView
@@ -33,13 +36,15 @@ internal class NewWindowProbe(private val context: Context, private val profiles
             page.mark(parent)
             val cookies = WebViewCompat.getProfile(parent).cookieManager
             val before = cookies.getCookie(TARGET)
-            for ((script, expected) in listOf(
+            for ((index, testCase) in listOf(
                 "window.open('$TARGET','_blank')" to TARGET,
                 "var a=document.createElement('a');a.href='$TARGET';a.target='_blank';document.body.appendChild(a);a.click()" to TARGET,
                 "var w=window.open('about:blank','_blank');try{w.document.cookie='mws_window_mutation=present;Path=/;Secure';w.localStorage.setItem('mws-self-test-marker','changed')}catch(e){}" to null,
                 "var delayed=window.open('about:blank','_blank');if(delayed)delayed.location='$TARGET'" to null,
                 "var f=document.createElement('form');f.action='$TARGET';f.method='POST';f.target='_blank';document.body.appendChild(f);f.submit()" to null,
-            )) {
+            ).withIndex()) {
+                val (script, expected) = testCase
+                val caseName = listOf("window.open", "target_blank", "blank_mutation", "blank_redirect", "post")[index]
                 val child = profiles.createSelfTestWebView(context, profile)
                 try {
                     configureWindowProbe(child.webView)
@@ -77,18 +82,23 @@ internal class NewWindowProbe(private val context: Context, private val profiles
                     }
                     // Give an incorrectly dispatched load time to reveal itself, without allowing network bytes.
                     delay(250)
+                    val cookieChanged = cookies.getCookie(TARGET) != before
+                    val storageChanged = page.value(parent) != "\"present\""
                     if (windows != 1 || observed != expected || intercepted.get() != 0 || started.get() != 0 ||
-                        cookies.getCookie(TARGET) != before || page.value(parent) != "\"present\"") return@withContext false
+                        cookieChanged || storageChanged) return@withContext (
+                        "$caseName: windows=$windows, destinationMatches=${observed == expected}, " +
+                            "intercepted=${intercepted.get()}, started=${started.get()}, " +
+                            "cookieChanged=$cookieChanged, storageChanged=$storageChanged")
                 } finally {
                     parent.webChromeClient = WebChromeClient()
                     profiles.release(child)
                 }
             }
-            true
+            null
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: RuntimeException) {
-            false
+        } catch (failure: RuntimeException) {
+            "probe_exception: ${failure.javaClass.simpleName}"
         } finally {
             profiles.finishSelfTestProfile(profile)
         }

@@ -16,7 +16,8 @@ class RuntimeSelfTestInstrumentedTest {
     @Test fun newWindowProbePassesWithoutNetwork() = runBlocking {
         assumeTrue("MULTI_PROFILE", WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE))
         val context = InstrumentationRegistry.getInstrumentation().targetContext
-        assertTrue("NewWindowProbe", NewWindowProbe(context, ShellServices.shared(context).profiles).run())
+        val failure = NewWindowProbe(context, ShellServices.shared(context).profiles).diagnose()
+        org.junit.Assert.assertNull("NewWindowProbe: $failure", failure)
     }
 
     @Test fun formFillProbePassesWithoutNetwork() = runBlocking {
