@@ -478,7 +478,11 @@ An entry qualifies only if every flow passes. Shipped floors are generated from 
 
 | Provider package | Exact provider version | Android/API and image | Architecture | AndroidX WebKit | Test date | Suite revision | Evidence | Result |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| _No provider qualified yet_ | — | — | — | — | — | — | — | `BLOCKED` |
+| com.google.android.webview | 153.0.8010.36 | Android 16 / API 36; Samsung Galaxy S25 SM-S931B | arm64-v8a | 1.17.1 | 2026-09-28 | `c03ceeadbafc55a2196689f5b1aec8257a463bac` | [37 suite tests and four restart phases](../provider-evidence-20260928T084927Z/) at `374f8e2e9b8a801a75bda1da3780e851850983f4` | `PASS` |
+
+All 37 suite tests and the four separate process-restart phases passed without
+required skips. Discovery's credentialless fallback passed; full-context native
+cookie support remains disabled pending its own qualification.
 
 ### Cleartext loopback investigation (mws-do5dy1)
 
@@ -501,4 +505,5 @@ and the device's non-loopback IPv4 interface. Each listener address is calibrate
 with a native socket before accepting zero received bytes. A missing interface
 is an explicit skip and cannot qualify the non-loopback flow. POST-preserving
 307 redirects remain required because URL interception covers only the initial
-request. The provider remains unqualified until real-device evidence passes.
+request. The passing matrix evidence above includes these transport checks on
+the device.
