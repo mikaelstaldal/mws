@@ -188,8 +188,10 @@ internal class NewWindowProbe(private val context: Context, private val profiles
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest) =
                 production.shouldOverrideUrlLoading(view, request)
             @Deprecated("A URL-only callback cannot establish the request method")
-            override fun shouldOverrideUrlLoading(view: WebView, url: String) =
-                @Suppress("DEPRECATION") production.shouldOverrideUrlLoading(view, url)
+            // OVERRIDE_DEPRECATION: the compiler ignores @Deprecated on an anonymous object's member.
+            @Suppress("DEPRECATION", "OVERRIDE_DEPRECATION")
+            override fun shouldOverrideUrlLoading(view: WebView, url: String): Boolean =
+                production.shouldOverrideUrlLoading(view, url)
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse {
                 intercepted += request.method
                 return production.shouldInterceptRequest(view, request)

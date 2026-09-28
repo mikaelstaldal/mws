@@ -192,6 +192,7 @@ class ShellActivityTest {
         assertTrue(backend.bound.isEmpty())
     }
 
+    @Suppress("DEPRECATION") // TaskDescription.icon has no public replacement for a bitmap icon
     @Test fun activeAppBindsItsActiveGenerationAndLoadsLaunchUrl() {
         val app = addApp(generation = 3, themeColor = 0xFF112233.toInt())
         val activity = launch(ShellActivity.intent(context, app.id))
@@ -329,6 +330,7 @@ class ShellActivityTest {
         assertEquals(1, backend.bound.size)
     }
 
+    @Suppress("DEPRECATION") // ShadowWebView.setCanGoBack
     @Test fun backNavigatesHistoryThenClosesTheShell() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))
@@ -477,6 +479,7 @@ class ShellActivityTest {
         assertEquals(app.launchUrl, Shadows.shadowOf(view).lastLoadedUrl)
     }
 
+    @Suppress("DEPRECATION") // ShadowWebView.setCanGoBack
     @Test fun backDismissesErrorBeforeNavigatingHistory() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))
@@ -520,6 +523,7 @@ class ShellActivityTest {
         assertNull(activity.findViewById<Button>(R.id.shell_retry_button))
     }
 
+    @Suppress("DEPRECATION") // RenderProcessGoneDetail() is only meant for the platform
     @Test fun rendererCrashRebindsSameProfileOnRetry() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))
@@ -543,6 +547,7 @@ class ShellActivityTest {
         assertEquals(listOf(ProfileNames.app(app.id, 0), ProfileNames.app(app.id, 0)), backend.bound)
     }
 
+    @Suppress("DEPRECATION") // RenderProcessGoneDetail() is only meant for the platform
     @Test fun clearAfterRendererCrashClosesShellBeforeRecovery() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))
@@ -1490,6 +1495,7 @@ class ShellActivityTest {
         .putExtra(MyPassClient.EXTRA_RESULT_USERNAME, "user")
         .putExtra(MyPassClient.EXTRA_RESULT_PASSWORD, "secret")
 
+    @Suppress("DEPRECATION") // ShadowPackageManager.addResolveInfoForIntent
     private fun installMyPass() {
         Shadows.shadowOf(context as android.app.Application).grantPermissions(MyPassClient.PERMISSION)
         val info = android.content.pm.ResolveInfo().apply {
@@ -1502,6 +1508,7 @@ class ShellActivityTest {
             MyPassClient.requestIntent("https://example.invalid/"), info)
     }
 
+    @Suppress("DEPRECATION") // ShadowPackageManager.addResolveInfoForIntent
     private fun installBrowser(packageName: String) {
         val info = android.content.pm.ResolveInfo().apply {
             activityInfo = android.content.pm.ActivityInfo().apply {

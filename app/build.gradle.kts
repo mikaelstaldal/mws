@@ -17,6 +17,12 @@ kapt {
     }
 }
 
+// Unit tests declare no annotation processors, so their kapt tasks would only warn that the
+// Room options went unrecognized.
+tasks.matching { it.name.startsWith("kapt") && it.name.endsWith("UnitTestKotlin") }.configureEach {
+    enabled = false
+}
+
 // Signing key shared by the nu.staldal.* apps. Enabling guarding services by a signature-level permission,
 // so the two apps must be signed with the same key for it to be granted. The default
 // ~/.android/debug.keystore would satisfy that, but it is a poor trust anchor: world-readable,
