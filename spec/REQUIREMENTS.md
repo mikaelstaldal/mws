@@ -381,6 +381,8 @@ Acceptance procedure: `spec/ACCESSIBILITY_ACCEPTANCE.md` (automated native-scree
 
 ## 17. Acceptance criteria
 
+Test traceability and end-to-end device procedures: [ACCEPTANCE.md](ACCEPTANCE.md).
+
 1. A valid HTTPS URL with a name and no manifest can be added, saved and launched from the main list.
 2. The shell shows no browser chrome, and the bottom system navigation area never obscures content.
 3. After two in-WebView navigations, Back returns to the previous page; at the first entry, Back closes the shell.

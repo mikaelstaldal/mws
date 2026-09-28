@@ -430,6 +430,10 @@ until these cases pass on the real provider.
 
 ## 14. Test strategy
 
+The [R§17 acceptance matrix](ACCEPTANCE.md) maps every numbered criterion to
+existing automated tests and any required end-to-end device procedure. Record
+device results separately from build and instrumented-test results.
+
 ### 14.1 Unit tests
 
 URL normalization (including every R§6.1 and R§10 case: userinfo, default ports, trailing dot, HTTP/`localhost`/loopback rejection, HTTPS IPv4/IPv6 canonicalization, scheme-less IP rejection, IDN, whitespace, ambiguous colon), secure-context classification, origin matching, manifest resolution, scope checks, icon selection ranking, login-form candidate scoring, credential-like parameter detection (HTTPS and each custom scheme), contrast selection, and the profile-generation state machine.
