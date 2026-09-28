@@ -81,13 +81,36 @@ class NavigationPolicyTest {
         for ((url, scheme) in listOf("mailto:a@example.com?subject=hi" to ExternalScheme.MAILTO,
             "tel:+4612345" to ExternalScheme.TEL, "sms:+4612345?body=x" to ExternalScheme.SMS,
             "geo:59.3,18.0" to ExternalScheme.GEO, "market://details?id=x" to ExternalScheme.MARKET,
-            "MAILTO:a@example.com" to ExternalScheme.MAILTO)) {
+            "MAILTO:a@example.com" to ExternalScheme.MAILTO,
+            "bankid:///?autostarttoken=abc&redirect=null" to ExternalScheme.BANKID)) {
             val decision = main(url) as NavigationDecision.Confirm
             assertEquals(scheme, decision.scheme)
             assertEquals(url, decision.url)
             val blocked = NavigationDecision.Block(R.string.shell_external_blocked)
-            assertEquals(blocked, main(url, redirect = true))
-            assertEquals(blocked, main(url, gesture = false))
+            if (scheme == ExternalScheme.BANKID) {
+                assertEquals(decision, main(url, redirect = true))
+                assertEquals(decision, main(url, gesture = false))
+            } else {
+                assertEquals(blocked, main(url, redirect = true))
+                assertEquals(blocked, main(url, gesture = false))
+            }
+        }
+    }
+
+    @Test fun bankIdAppLinkNeedsAnAutostartTokenAndMainFrame() {
+        val url = "https://app.bankid.com/?autostarttoken=abc&redirect=null"
+        assertEquals(NavigationDecision.Confirm(url, ExternalScheme.BANKID), main(url))
+        assertEquals(NavigationDecision.Confirm(url, ExternalScheme.BANKID), main(url, redirect = true))
+        assertEquals(NavigationDecision.Confirm(url, ExternalScheme.BANKID), main(url, gesture = false))
+        assertEquals(NavigationDecision.Block(null), sub(url))
+        for (query in listOf("autostarttoken=abc&x=|", "autostarttoken=abc&x=%zz")) {
+            val unusual = "https://app.bankid.com/?$query"
+            assertEquals(NavigationDecision.Confirm(unusual, ExternalScheme.BANKID), main(unusual))
+        }
+        for (ordinary in listOf("https://app.bankid.com/", "https://app.bankid.com/help?autostarttoken=abc",
+            "https://app.bankid.com.evil.example/?autostarttoken=abc",
+            "https://other.example/?autostarttoken=abc")) {
+            assertEquals(ordinary, NavigationDecision.Stay, main(ordinary))
         }
     }
 

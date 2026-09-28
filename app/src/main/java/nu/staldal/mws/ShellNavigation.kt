@@ -13,13 +13,14 @@ import androidx.annotation.StringRes
 import androidx.appcompat.app.AlertDialog
 import java.util.Locale
 
-/** The version 1 external-scheme allowlist (R§9.3), each named by its destination type. */
+/** External destinations (R§9.3), each named by its destination type. */
 enum class ExternalScheme(val scheme: String, @param:StringRes val prompt: Int) {
     MAILTO("mailto", R.string.external_prompt_mailto),
     TEL("tel", R.string.external_prompt_tel),
     SMS("sms", R.string.external_prompt_sms),
     GEO("geo", R.string.external_prompt_geo),
-    MARKET("market", R.string.external_prompt_market);
+    MARKET("market", R.string.external_prompt_market),
+    BANKID("bankid", R.string.external_prompt_bankid);
 
     companion object {
         fun of(scheme: String): ExternalScheme? = entries.firstOrNull { it.scheme == scheme }
@@ -56,13 +57,21 @@ object NavigationPolicy {
         val scheme = scheme(url)
         fun block(message: Int) = NavigationDecision.Block(if (mainFrame) message else null)
         return when {
-            scheme == "https" ->
-                if (UrlPolicy.parseNavigation(url) != null) NavigationDecision.Stay
-                else block(R.string.shell_url_rejected)
+            scheme == "https" -> {
+                val parsed = UrlPolicy.parseNavigation(url)
+                when {
+                    parsed == null -> block(R.string.shell_url_rejected)
+                    isBankIdAppLink(parsed) ->
+                        if (mainFrame) NavigationDecision.Confirm(url, ExternalScheme.BANKID)
+                        else block(R.string.shell_external_blocked)
+                    else -> NavigationDecision.Stay
+                }
+            }
             scheme == "http" -> block(R.string.shell_https_required)
             !mainFrame && scheme in subframeContent -> NavigationDecision.Stay
             scheme != null && ExternalScheme.of(scheme) != null ->
-                if (mainFrame && !redirect && gesture) NavigationDecision.Confirm(url, ExternalScheme.of(scheme)!!)
+                if (mainFrame && (scheme == "bankid" || (!redirect && gesture)))
+                    NavigationDecision.Confirm(url, ExternalScheme.of(scheme)!!)
                 else block(R.string.shell_external_blocked)
             // javascript:, data:, file:, content:, intent: and every other scheme.
             else -> {
@@ -71,6 +80,13 @@ object NavigationPolicy {
             }
         }
     }
+
+    /** BankID's Android app link, limited to the documented autostart endpoint. */
+    private fun isBankIdAppLink(url: UrlPolicy.HttpsUrl): Boolean =
+        url.host == "app.bankid.com" && url.path == "/" &&
+            url.serialized.substringBefore('#').substringAfter('?', "").split('&').any { parameter ->
+                parameter.startsWith("autostarttoken=") && parameter.length > "autostarttoken=".length
+            }
 }
 
 /**

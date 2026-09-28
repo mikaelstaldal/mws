@@ -292,7 +292,7 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 
 ### 9.4 Navigation policy implementation
 
-- `shouldOverrideUrlLoading` enforces scheme and transport policy through the pure `NavigationPolicy`: HTTPS stays, cleartext is rejected, dangerous schemes are blocked, and allowlisted external schemes are confirmed only when main-frame, `!isRedirect` and `hasGesture()`.
+- `shouldOverrideUrlLoading` enforces scheme and transport policy through the pure `NavigationPolicy`: HTTPS stays except BankID's exact `app.bankid.com` root app link with a nonempty `autostarttoken`, cleartext is rejected, dangerous schemes are blocked, and allowlisted external destinations require confirmation. BankID destinations may be main-frame redirects or script navigations; other schemes require main-frame, `!isRedirect` and `hasGesture()`.
   - HTTPS must pass `UrlPolicy.parseNavigation`: the host and userinfo rules of an allowed HTTPS URL (R§10, so hosts failing UTS #46 STD3, such as labels with `_`, are refused even though Chromium accepts them), without the 8 KiB persisted-URL limit (long sign-in redirects must work).
   - Subframes: HTTPS, `about:`, `data:` and `blob:` load as web content; everything else is cancelled silently, and nothing from a subframe is ever delegated.
   - A navigation refused for its scheme (not HTTP, not an allowlisted external scheme and not subframe content) is reported through the policy's `onDisallowedScheme` callback; `DisallowedSchemeLog` logs it with `Log.i` under tag `ShellNavigation`, including the full URL only when `BuildConfig.DEBUG`. The HTTPS-only new-window probe and discovery clients log every refused scheme other than HTTP(S) the same way (`logUnlessHttp`).

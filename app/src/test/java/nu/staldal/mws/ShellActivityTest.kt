@@ -1010,6 +1010,32 @@ class ShellActivityTest {
         assertNull(Shadows.shadowOf(activity).nextStartedActivity)
     }
 
+    @Test fun bankIdAppLinkIsDelegatedAfterConfirmation() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        client.onPageCommitVisible(view, app.launchUrl)
+        val url = "https://app.bankid.com/?autostarttoken=example&redirect=null"
+        assertTrue(client.shouldOverrideUrlLoading(view, request(url, "GET")))
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        val dialog = permissionDialog()
+        assertEquals(context.getString(R.string.external_prompt_bankid),
+            dialog.findViewById<android.widget.TextView>(android.R.id.message)!!.text.toString())
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        settle()
+        val warning = permissionDialog()
+        assertTrue(warning.findViewById<android.widget.TextView>(android.R.id.message)!!.text.toString()
+            .contains("autostarttoken"))
+        warning.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        settle()
+        val started = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(Intent.ACTION_VIEW, started.action)
+        assertEquals(url, started.dataString)
+        assertEquals(setOf(Intent.CATEGORY_BROWSABLE), started.categories)
+        assertNull(started.extras)
+    }
+
     @Test fun redirectedUngesturedOrSubframeExternalSchemesAreBlockedWithoutPrompt() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))

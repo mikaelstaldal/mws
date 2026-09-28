@@ -242,13 +242,13 @@ Timers pause while a MyPass request started by that attempt is outstanding.
   - No second visible WebView or window is ever created.
 - **Open in browser**: long-pressing a link offers it only for an allowed HTTPS URL, and it acts only on that deliberate choice.
 - **System browser handoff**: no credentials, Authorization/Cookie headers, referrer, or web data are transferred. Userinfo URLs are rejected. Credential-like parameters trigger the redacted consent from §4.1 (Continue / Cancel). If no browser is available, show a non-fatal error and stay on the page.
-- **External schemes**: the version 1 allowlist is exactly `mailto:`, `tel:`, `sms:`, `geo:` and `market:`.
-  - Delegation needs a confirmation naming the destination type, and is offered only for a main-frame, non-redirect navigation with a trusted user gesture. A redirected or ungestured one is blocked with a non-fatal message and no confirmation.
+- **External schemes**: the allowlist is `mailto:`, `tel:`, `sms:`, `geo:`, `market:` and `bankid:`. BankID's `https://app.bankid.com/?autostarttoken=…` app link is also delegated to Android, while other HTTPS links stay in the shell.
+  - Delegation needs a confirmation naming the destination type. `bankid:` and the BankID HTTPS autostart link may ask for confirmation on any main-frame navigation, including redirects and script navigation; they are never delegated from a subframe. Other external schemes require a main-frame, non-redirect navigation with a trusted user gesture. A redirected or ungestured one is blocked with a non-fatal message and no confirmation.
   - If no handler is installed, show a non-fatal error.
   - Confirmation never grants a scheme permanently.
   - `intent:` and every other scheme are blocked with a non-fatal message and never passed to Android.
   - Each navigation blocked for its scheme (main frame or subframe, in the shell, a new window or discovery) is logged at info level with the scheme. Only a debug build also logs the full URL, since it may carry secrets.
-  - Credential-like parameter scanning applies to each scheme's query and fragment components (for `mailto:`, the query after the address and any fragment), parsed as `&`-separated UTF-8 percent-decoded pairs without turning `+` into a space. Scheme payloads (recipient, number, coordinates, market path) are not scanned. Malformed or ambiguous components give a conservative "unparseable" warning.
+  - Credential-like parameter scanning applies to each scheme's query and fragment components (for `mailto:`, the query after the address and any fragment), parsed as `&`-separated UTF-8 percent-decoded pairs without turning `+` into a space. Scheme payloads (recipient, number, coordinates, market path and BankID path) are not scanned. Malformed or ambiguous components give a conservative "unparseable" warning.
 
 ### 9.4 Loading and errors
 
@@ -425,5 +425,5 @@ Test traceability and end-to-end device procedures: [ACCEPTANCE.md](ACCEPTANCE.m
 39. A `CLEARING` app is a disabled row at its usual position in the main list and multi-app widgets. A removed app disappears immediately.
 40. Each running shell has its own Recents entry, and relaunching a live app brings that shell forward.
 41. Pull-to-refresh at page top reloads and permits a new form-fill attempt, and it is inactive when scrolled.
-42. `mailto:`, `tel:`, `sms:`, `geo:` and `market:` are delegated only after confirmation, and `intent:` is blocked.
+42. `mailto:`, `tel:`, `sms:`, `geo:`, `market:`, `bankid:` and BankID's HTTPS autostart app link are delegated only after confirmation, and `intent:` is blocked. BankID autostart works for main-frame redirects and script navigation.
 43. `theme_color` tints the system bars and task description with legible icon contrast, and `background_color` paints before first paint; neither affects native screens.

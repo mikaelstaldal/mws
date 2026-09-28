@@ -19,9 +19,9 @@ class CredentialParameterScan internal constructor(val keys: List<String>, val u
 }
 
 object CredentialParameters {
-    val WORDS = listOf("access_token", "auth", "authorization", "code", "credential", "jwt", "key",
+    val WORDS = listOf("access_token", "autostarttoken", "auth", "authorization", "code", "credential", "jwt", "key",
         "password", "secret", "session", "sessionid", "sig", "signature", "ticket", "token")
-    val CUSTOM_SCHEMES = setOf("mailto", "tel", "sms", "geo", "market")
+    val CUSTOM_SCHEMES = setOf("mailto", "tel", "sms", "geo", "market", "bankid")
     private const val SEPARATORS = "_-."
 
     fun isCredentialLikeKey(key: String): Boolean {

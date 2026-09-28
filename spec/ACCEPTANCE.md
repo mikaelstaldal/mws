@@ -98,7 +98,7 @@ class covers several behaviors.
 | 39 | J `MainScreenTest.clearingRowKeepsPositionAndExplainsTap`, `MultiWidgetTest.instanceSelectionsKeepCanonicalOrderAndClearingRows`; D `WidgetAcceptanceInstrumentedTest` | M5, M7 |
 | 40 | D `ShellTaskInstrumentedTest.eachAppHasOneRecentsTaskAndRelaunchBringsItForward` | M12 |
 | 41 | J `ShellActivityTest.pullToRefreshIsBlockedUntilLoadedAndWheneverPageCanScrollUp`, `explicitReloadPreparesFormFillButCannotRearmBasicAuthentication` | [pull-to-refresh device procedure](PULL_TO_REFRESH_ACCEPTANCE.md) |
-| 42 | J `ShellActivityTest.allowlistedSchemeIsDelegatedOnlyAfterConfirmationEveryTime`, `dangerousAndUnknownSchemesAreBlockedAndNeverPassedToAndroid`; D `ShellNavigationInstrumentedTest.blockedAndUngesturedSchemesAreNeverPassedToAndroid` | M9 |
+| 42 | J `ShellActivityTest.allowlistedSchemeIsDelegatedOnlyAfterConfirmationEveryTime`, `bankIdAppLinkIsDelegatedAfterConfirmation`, `dangerousAndUnknownSchemesAreBlockedAndNeverPassedToAndroid`; `NavigationPolicyTest.bankIdAppLinkNeedsAnAutostartTokenAndMainFrame`; D `ShellNavigationInstrumentedTest.blockedAndUngesturedSchemesAreNeverPassedToAndroid` | M9; verify a real BankID login on a device, including a relying party with a non-null return URL (BankID may open the default browser instead of returning to MWS) |
 | 43 | J `ShellPresentationTest.wcagReferenceValuesAndIconSelection`, `paintsManifestBackgroundBeforeWebViewAndDoesNotChangeNativeWindow` | M12 |
 
 ## Manual device procedures
