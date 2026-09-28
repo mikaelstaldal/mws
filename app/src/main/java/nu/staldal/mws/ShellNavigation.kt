@@ -130,15 +130,28 @@ class ShellHandoff(private val context: Context) {
     /** One pending dialog at a time; a request arriving meanwhile is dropped. */
     fun confirmExternal(decision: NavigationDecision.Confirm) {
         if (closed || dialog != null) return
+        val message = if (decision.scheme == ExternalScheme.BANKID) {
+            val scan = CredentialParameters.scan(decision.url)
+            val otherKeys = CredentialParameterScan(
+                scan.keys.filterNot { it.equals("autostarttoken", ignoreCase = true) }, scan.unparseable)
+            context.getString(decision.scheme.prompt) +
+                if (otherKeys.isSensitive) "\n\n" + SensitiveUrlWarning.message(context, otherKeys, persisted = false)
+                else ""
+        } else context.getString(decision.scheme.prompt)
         var answered = false
         dialog = AlertDialog.Builder(context)
-            .setMessage(decision.scheme.prompt)
+            .setMessage(message)
             .setPositiveButton(R.string.external_open) { _, _ ->
                 // Click and dismiss are posted separately, so a fast double tap can arrive twice.
                 if (answered) return@setPositiveButton
                 answered = true
                 dialog = null
-                withConsent(decision.url) { start(externalIntent(decision.url), R.string.shell_no_handler) }
+                if (decision.scheme == ExternalScheme.BANKID) {
+                    // This prompt covers the sign-in link and any extra sensitive parameters.
+                    start(externalIntent(decision.url), R.string.shell_no_handler)
+                } else {
+                    withConsent(decision.url) { start(externalIntent(decision.url), R.string.shell_no_handler) }
+                }
             }
             .setNegativeButton(R.string.sensitive_url_cancel, null)
             .setOnDismissListener { if (!answered) dialog = null }

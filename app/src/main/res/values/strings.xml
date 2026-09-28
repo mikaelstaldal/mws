@@ -54,7 +54,7 @@
     <string name="external_prompt_sms">Open this text message link in another app?</string>
     <string name="external_prompt_geo">Open this location in another app?</string>
     <string name="external_prompt_market">Open this app store link in another app?</string>
-    <string name="external_prompt_bankid">Open BankID in another app?</string>
+    <string name="external_prompt_bankid">Open this BankID sign-in link in another app?</string>
     <string name="mypass_available">MyPass available</string>
     <string name="mypass_unavailable">MyPass unavailable; you can still save and use this app</string>
     <string name="provider_incompatible">Web apps cannot run with the current WebView provider (%1$s, version %2$s). You can still configure or remove saved apps. Launching, discovery, and clearing site data are paused until compatibility is restored.</string>

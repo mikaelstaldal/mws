@@ -1021,24 +1021,34 @@ class ShellActivityTest {
         val view = awaitWebView(activity)
         val client = Shadows.shadowOf(view).webViewClient
         client.onPageCommitVisible(view, app.launchUrl)
-        val url = "https://app.bankid.com/?autostarttoken=example&redirect=null"
-        assertTrue(client.shouldOverrideUrlLoading(view, request(url, "GET")))
-        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        for (url in listOf("https://app.bankid.com/?autostarttoken=example&redirect=null",
+            "bankid:///?autostarttoken=example&redirect=null")) {
+            assertTrue(client.shouldOverrideUrlLoading(view, request(url, "GET")))
+            assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+            val dialog = permissionDialog()
+            assertEquals(context.getString(R.string.external_prompt_bankid),
+                dialog.findViewById<android.widget.TextView>(android.R.id.message)!!.text.toString())
+            dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+            settle()
+            assertFalse(dialog.isShowing)
+            assertEquals(dialog, org.robolectric.shadows.ShadowDialog.getLatestDialog())
+            val started = Shadows.shadowOf(activity).nextStartedActivity
+            assertEquals(Intent.ACTION_VIEW, started.action)
+            assertEquals(url, started.dataString)
+            assertEquals(setOf(Intent.CATEGORY_BROWSABLE), started.categories)
+            assertNull(started.extras)
+        }
+        val extra = "https://app.bankid.com/?autostarttoken=example&session=private-value"
+        assertTrue(client.shouldOverrideUrlLoading(view, request(extra, "GET")))
         val dialog = permissionDialog()
-        assertEquals(context.getString(R.string.external_prompt_bankid),
-            dialog.findViewById<android.widget.TextView>(android.R.id.message)!!.text.toString())
+        val message = dialog.findViewById<android.widget.TextView>(android.R.id.message)!!.text.toString()
+        assertTrue(message.contains("“session”"))
+        assertFalse(message.contains("private-value"))
+        assertFalse(message.contains("autostarttoken"))
         dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
         settle()
-        val warning = permissionDialog()
-        assertTrue(warning.findViewById<android.widget.TextView>(android.R.id.message)!!.text.toString()
-            .contains("autostarttoken"))
-        warning.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
-        settle()
-        val started = Shadows.shadowOf(activity).nextStartedActivity
-        assertEquals(Intent.ACTION_VIEW, started.action)
-        assertEquals(url, started.dataString)
-        assertEquals(setOf(Intent.CATEGORY_BROWSABLE), started.categories)
-        assertNull(started.extras)
+        assertEquals(dialog, org.robolectric.shadows.ShadowDialog.getLatestDialog())
+        assertEquals(extra, Shadows.shadowOf(activity).nextStartedActivity.dataString)
     }
 
     @Test fun redirectedUngesturedOrSubframeExternalSchemesAreBlockedWithoutPrompt() {

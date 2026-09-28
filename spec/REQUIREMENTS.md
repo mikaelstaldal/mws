@@ -47,14 +47,14 @@ It is not a general-purpose browser. It is a user-configured container for trust
 - **User-initiated / explicit user action**: directly caused by a trusted WebView user gesture as reported by the provider, with no grace period that would let later script actions inherit that status.
 - **Allowed HTTPS URL**: a syntactically valid, userinfo-free HTTPS URL whose host passes the rules in §10.
 - **Main-frame visible commit**: the moment the WebView reports that the current main-frame navigation became visible (`onPageCommitVisible`).
-- **Credential-like URL parameter**: a case-insensitive query or fragment key equal to `access_token`, `auth`, `authorization`, `code`, `credential`, `jwt`, `key`, `password`, `secret`, `session`, `sessionid`, `sig`, `signature`, `ticket` or `token`, or that begins or ends with one of those words separated by `_`, `-` or `.`. This is a warning heuristic only, never proof that a URL is safe.
+- **Credential-like URL parameter**: a case-insensitive query or fragment key equal to `access_token`, `autostarttoken`, `auth`, `authorization`, `code`, `credential`, `jwt`, `key`, `password`, `secret`, `session`, `sessionid`, `sig`, `signature`, `ticket` or `token`, or that begins or ends with one of those words separated by `_`, `-` or `.`. This is a warning heuristic only, never proof that a URL is safe.
 
 ### 4.1 Sensitive-URL consent
 
 - Before a configured, final or launch URL containing a credential-like parameter is first persisted, show a redacted warning that names only the matching keys (never values) and requires explicit consent.
 - The URL is never silently modified.
 - Consent applies to that exact serialized URL; a changed sensitive URL needs consent again.
-- The same warning and fresh consent are required before delegating such a URL (HTTPS or allowlisted custom scheme) to another app.
+- The same warning and fresh consent are required before delegating such a URL (HTTPS or allowlisted custom scheme) to another app. For a BankID handoff, the BankID confirmation covers its expected `autostarttoken`; warnings for any other credential-like or unreadable parameters appear in that same dialog.
 - The warning explains that device backup or transfer may include these URLs.
 - If the user declines: a typed configured URL blocks Save; a discovered final or launch URL is discarded and the configured URL is used instead.
 
@@ -246,6 +246,7 @@ Timers pause while a MyPass request started by that attempt is outstanding.
   - Delegation needs a confirmation naming the destination type. `bankid:` and the BankID HTTPS autostart link may ask for confirmation on any main-frame navigation, including redirects and script navigation; they are never delegated from a subframe. Other external schemes require a main-frame, non-redirect navigation with a trusted user gesture. A redirected or ungestured one is blocked with a non-fatal message and no confirmation.
   - If no handler is installed, show a non-fatal error.
   - Confirmation never grants a scheme permanently.
+  - The BankID confirmation explicitly covers sending that sign-in link to another app. It is the only confirmation for a BankID handoff; any warning for other sensitive parameters appears in it. Other destinations still use the separate credential-like parameter warning from §4.1 when needed.
   - `intent:` and every other scheme are blocked with a non-fatal message and never passed to Android.
   - Each navigation blocked for its scheme (main frame or subframe, in the shell, a new window or discovery) is logged at info level with the scheme. Only a debug build also logs the full URL, since it may carry secrets.
   - Credential-like parameter scanning applies to each scheme's query and fragment components (for `mailto:`, the query after the address and any fragment), parsed as `&`-separated UTF-8 percent-decoded pairs without turning `+` into a space. Scheme payloads (recipient, number, coordinates, market path and BankID path) are not scanned. Malformed or ambiguous components give a conservative "unparseable" warning.
