@@ -6,7 +6,7 @@ This document records the technical design and constraints that implement
 ## 1. Technology baseline
 
 - Native Android, Kotlin. Minimum SDK 31; target SDK is the latest stable.
-- The initial build uses one `app` module, Gradle 8.14.3, Android Gradle Plugin 8.13.2, Kotlin 2.2.21, Java 21 as the build toolchain and Java/Kotlin bytecode target, and compile/target SDK 36 (the stable API at scaffold time). Versions are pinned in `gradle/libs.versions.toml`; API 37 is still a preview.
+- One `app` module, built with the system Gradle (no wrapper). Java 21 is the build toolchain and Java/Kotlin bytecode target. Android Gradle Plugin, Kotlin and library versions are pinned in `gradle/libs.versions.toml`; SDK levels are set in `app/build.gradle.kts`.
 - AndroidX/Jetpack and Material components for native screens.
 - Room (or equivalent structured persistence) for non-secret configuration and metadata.
 - **AndroidX WebKit ≥ 1.9.0, pinned to an exact version in release builds.** Required features: `WebViewFeature.MULTI_PROFILE`, `WebViewCompat.setProfile`, `ProfileStore`, `WebViewCompat.addWebMessageListener`.
@@ -356,9 +356,9 @@ The native client is the **sole fetcher** of manifest and icon bodies, and it en
 - `BasicAuthGate` is the pure, thread-safe gate; `ShellBasicAuth` owns the MyPass lookup and is the only code allowed to answer an `HttpAuthHandler` (enforced by `scripts/check-security.py`).
 - `BasicAuthProbe` loads a network-blocked synthetic HTTPS page and replays the provider's callbacks through the production gate: the app's own load reaches `shouldInterceptRequest` with the exact recorded URL before commit, subresource and iframe requests are reported as non-main-frame requests and disarm it, and a later page-initiated main-frame navigation cannot rearm it. Challenge delivery needs a real server and is covered per floor version by the compatibility suite (§15).
 
-### 11.1 Conservative lifetime eligibility (mws-xv3vu4)
+### 11.1 Conservative lifetime eligibility
 
-The operator selected conservative eligibility. Each WebView has a gate that can
+Basic auth uses conservative eligibility. Each WebView has a gate that can
 arm once, for its initial navigation. Same-origin redirects may update the target
 within that navigation. Commit, cancellation, terminal errors, a competing request
 or any attempt to arm another navigation permanently ends eligibility. The lifetime
@@ -463,8 +463,8 @@ The instrumented test fixture uses a loopback MockWebServer with a checked-in te
 - **Sensitive URLs**: key-only redaction, exact-URL consent, backup disclosure, delegation, and decline behavior.
 - **Restore**: sentinel detection, interrupted normalization, `ACTIVE` state, new generations, cleared icons, order repair.
 - **Ordering**: drag-and-drop, accessible move actions, cancel/save, restart, append, stable on edit, gap removal, transactional rollback, repair of duplicate or gapped positions.
-- **Widgets**: multiple instances, resize, canonical order with different subsets, updates and removal, reboot, forged or stale IDs, per-instance records, `ALL_APPS` versus subset, pruning, deletion on `onDeleted`. `WidgetAcceptanceInstrumentedTest` supplies controlled device coverage for missing-record fallback, CLEARING rows/configuration/launch exclusion, and record cleanup; its optional hold allows inspection in the real launcher. See [controlled widget acceptance](WIDGET_ACCEPTANCE.md).
-- **Accessibility**: `AccessibilityInstrumentedTest` runs Espresso AccessibilityChecks from each native screen root (main screen, editor, confirmation dialog, provider/shell errors and both widget configuration screens). Install both widget types before running configuration checks. Material/theme colors supply native contrast; controls use at least 48 dp touch targets, headings are marked semantically, and status text uses polite live regions. Shell overlay announcements are emitted only when the loading/error state changes. Large-text forms and provider/shell errors scroll, and action groups stack vertically. The default ATF error severity is enforced; `spec/ACCESSIBILITY_ACCEPTANCE.md` covers device acceptance for TalkBack traversal, dark mode, and 200% text scaling.
+- **Widgets**: multiple instances, resize, canonical order with different subsets, updates and removal, reboot, forged or stale IDs, per-instance records, `ALL_APPS` versus subset, pruning, deletion on `onDeleted`. `WidgetAcceptanceInstrumentedTest` supplies controlled device coverage for missing-record fallback, CLEARING rows/configuration/launch exclusion, and record cleanup; its optional hold allows inspection in the real launcher. See [controlled widget acceptance](ACCEPTANCE.md#widget-procedure).
+- **Accessibility**: `AccessibilityInstrumentedTest` runs Espresso AccessibilityChecks from each native screen root (main screen, editor, confirmation dialog, provider/shell errors and both widget configuration screens). Install both widget types before running configuration checks. Material/theme colors supply native contrast; controls use at least 48 dp touch targets, headings are marked semantically, and status text uses polite live regions. Shell overlay announcements are emitted only when the loading/error state changes. Large-text forms and provider/shell errors scroll, and action groups stack vertically. The default ATF error severity is enforced; [ACCEPTANCE.md](ACCEPTANCE.md#accessibility-procedure-r14) covers device acceptance for TalkBack traversal, dark mode, and 200% text scaling.
 
 ## 15. Provider compatibility matrix
 
@@ -477,7 +477,7 @@ This is the normative evidence for per-package floors. Each entry records:
 - test date, suite revision and evidence location (version-controlled, immutable revision);
 - pass/fail for every provider-sensitive flow: profile isolation and deletion, cleartext rejection before transmission, Basic-auth correlation, exact-origin form-fill messaging, pre-dispatch new-window routing, full-context cookie decisions and their fail-closed fallbacks, discovery, and crash-resumable profile maintenance.
 
-An entry qualifies only if every flow passes. Shipped floors are generated from qualifying entries, and a new entry is required whenever the pinned AndroidX WebKit version changes. **The initial release is blocked until at least one qualifying entry exists.**
+An entry qualifies only if every flow passes. Shipped floors are generated from qualifying entries, and a new entry is required whenever the pinned AndroidX WebKit version changes. **Release verification fails unless at least one qualifying entry exists.**
 
 `ProviderCompatibilitySuite` packages the provider device tests; separate preparation/deletion-interruption/verification/cleanup instrumentation phases establish persisted-worker and maintenance behavior across a killed process. The [qualification procedure and coverage gaps](PROVIDER_QUALIFICATION.md) describe the required evidence; a passing subset or a run with skipped required tests does not qualify an entry.
 
@@ -489,26 +489,18 @@ All 37 suite tests and the four separate process-restart phases passed without
 required skips. Discovery's credentialless fallback passed; full-context native
 cookie support remains disabled pending its own qualification.
 
-### Cleartext loopback investigation (mws-do5dy1)
+### Cleartext loopback regression
 
-The Samsung Galaxy S25 SM-S931B, Android 16.0/API 36.1, WebView
-153.0.8010.36 report `provider-focused-2.txt` attached to AWB mws-0d571f
-(source diagnostic revision `a147d2dc843c3e1d8b04873069c73002fb981d76`)
-records 872 bytes received by the 127.0.0.1 listener for a POST despite a
-cleartext-disabled base configuration. Earlier GET/link checks passed; later
-flows did not run after that assertion failed. This establishes a loopback
-failure only, not a provider-wide bypass for non-loopback destinations.
-
-[Android's localhost policy documentation](https://developer.android.com/privacy-and-security/security-config#localhost)
-describes an implicit cleartext allowance starting at API 37. The
-[Android 16 QPR2 platform source](https://android.googlesource.com/platform/frameworks/base/+/android16-qpr2-release/packages/NetworkSecurityConfig/platform/src/android/security/net/config/ManifestConfigSource.java)
-also contains a feature-flagged localhost configuration. Whether it is enabled
-on this API 36.1 device is a hypothesis pending device policy diagnostics, not a
-confirmed root cause. Regression tests check the effective policy for loopback
-aliases and a non-loopback host, and separately measure HTTP bytes for IPv4/IPv6 loopback
-and the device's non-loopback IPv4 interface. Each listener address is calibrated
-with a native socket before accepting zero received bytes. A missing interface
-is an explicit skip and cannot qualify the non-loopback flow. POST-preserving
-307 redirects remain required because URL interception covers only the initial
-request. The passing matrix evidence above includes these transport checks on
-the device.
+During qualification on the device above, an earlier diagnostic build saw a
+loopback (127.0.0.1) listener receive an HTTP POST despite the cleartext-disabled
+base configuration. That showed a loopback failure only, not a provider-wide
+bypass. [Android's localhost policy](https://developer.android.com/privacy-and-security/security-config#localhost)
+describes an implicit cleartext allowance for localhost starting at API 37, and
+Android 16 QPR2 contains a feature-flagged version of it. Its effect on API 36
+devices has not been confirmed. The regression tests check the effective policy
+for loopback aliases and a non-loopback host. They also measure HTTP bytes for
+IPv4/IPv6 loopback and the device's non-loopback IPv4 interface. Each listener
+is first calibrated with a native socket, so a count of zero bytes is meaningful.
+A missing interface is an explicit skip and cannot qualify the non-loopback
+flow. POST-preserving 307 redirects remain required because URL interception
+covers only the initial request. The passing entry above includes these checks.

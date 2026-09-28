@@ -21,7 +21,8 @@ and accessibility tests require actual widget instances.
 Store the result log and raw reports in a dated `acceptance-evidence-YYYYMMDD/`
 directory committed with the tested source revision. Begin with all 43 rows
 marked **not run**; change each row only when its automated and manual evidence
-has been collected. No M4 or M7 device run is claimed by this procedure alone.
+has been collected. For a bug fix or feature, run at least the rows and
+procedures for the affected criteria.
 
 ```sh
 gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
@@ -34,11 +35,8 @@ adb shell am instrument -w -r nu.staldal.mws.test/androidx.test.runner.AndroidJU
 An unfiltered instrumentation scan may run `ProviderCompatibilitySuite` and its
 members twice. For provider qualification, use the explicit selection and process
 restart phases in [PROVIDER_QUALIFICATION.md](PROVIDER_QUALIFICATION.md), and
-check the required counts and skips there. Run the controlled procedures in
-[WIDGET_ACCEPTANCE.md](WIDGET_ACCEPTANCE.md),
-[ACCESSIBILITY_ACCEPTANCE.md](ACCESSIBILITY_ACCEPTANCE.md), and
-[PULL_TO_REFRESH_ACCEPTANCE.md](PULL_TO_REFRESH_ACCEPTANCE.md) when their rows
-below call for them. A failure or required skip is not a pass.
+check the required counts and skips there. Run the [controlled device procedures](#controlled-device-procedures)
+when their rows below call for them. A failure or required skip is not a pass.
 
 Use two controlled HTTPS origins A and B with a manifest page, a page without a
 manifest, a two-link navigation sequence, Basic and HTML login pages, a download
@@ -97,7 +95,7 @@ class covers several behaviors.
 | 38 | J `ProfileManagerTest.missingSentinelNormalizesRestoreWithoutDeletingProfiles`, `ConfigurationRepositoryTest`; D `ConfigurationMigrationTest` | M11 |
 | 39 | J `MainScreenTest.clearingRowKeepsPositionAndExplainsTap`, `MultiWidgetTest.instanceSelectionsKeepCanonicalOrderAndClearingRows`; D `WidgetAcceptanceInstrumentedTest` | M5, M7 |
 | 40 | D `ShellTaskInstrumentedTest.eachAppHasOneRecentsTaskAndRelaunchBringsItForward` | M12 |
-| 41 | J `ShellActivityTest.pullToRefreshIsBlockedUntilLoadedAndWheneverPageCanScrollUp`, `explicitReloadPreparesFormFillButCannotRearmBasicAuthentication` | [pull-to-refresh device procedure](PULL_TO_REFRESH_ACCEPTANCE.md) |
+| 41 | J `ShellActivityTest.pullToRefreshIsBlockedUntilLoadedAndWheneverPageCanScrollUp`, `explicitReloadPreparesFormFillButCannotRearmBasicAuthentication` | [pull-to-refresh device procedure](#pull-to-refresh-procedure-r92) |
 | 42 | J `ShellActivityTest.allowlistedSchemeIsDelegatedOnlyAfterConfirmationEveryTime`, `bankIdAppLinkIsDelegatedAfterConfirmation`, `dangerousAndUnknownSchemesAreBlockedAndNeverPassedToAndroid`; `NavigationPolicyTest.bankIdAppLinkNeedsAnAutostartTokenAndMainFrame`; D `ShellNavigationInstrumentedTest.blockedAndUngesturedSchemesAreNeverPassedToAndroid` | M9; verify a real BankID login on a device, including a relying party with a non-null return URL (BankID may open the default browser instead of returning to MWS) |
 | 43 | J `ShellPresentationTest.wcagReferenceValuesAndIconSelection`, `paintsManifestBackgroundBeforeWebViewAndDoesNotChangeNativeWindow` | M12 |
 
@@ -179,7 +177,7 @@ one, then reboot and replace the package. Check names/icons, canonical ordering,
 retained subsets and launch targets after each change. Disconnect network to
 check saved icons. Tap a stale single-app widget after removal: it must show the
 main screen unavailable state, not launch the old URL. Run the controlled
-[widget acceptance procedure](WIDGET_ACCEPTANCE.md), including its optional
+[widget acceptance procedure](#widget-procedure), including its optional
 launcher hold, to verify a CLEARING row stays in place and cannot launch.
 
 ### M6 — failures and transport (16, 17, 26)
@@ -272,3 +270,120 @@ reload. On a manifest page with distinct `theme_color` and
 `background_color`, inspect system bars, task description and icon contrast in
 light/dark mode and the background before first paint. Return to the main and
 editor screens; neither takes the web app's colors.
+
+## Controlled device procedures
+
+### Widget procedure
+
+Use this procedure for the states that are hard to observe during normal device testing
+(R§12.1, R§12.3, A§13 and A§14). It supplements the manual instance, resize, reorder,
+edit/removal, offline, reboot and package-replacement checks.
+
+Build the app and instrumentation APKs with the development provider override:
+
+```bash
+DEBUG_PROVIDER_OVERRIDE=true gradle :app:assembleDebug :app:assembleDebugAndroidTest
+```
+
+Use a device whose runtime isolation/deletion probes pass. Keep at least one multi-app
+widget installed. The test fails rather than skipping if there is no installed widget
+or the runtime provider gate blocks access.
+
+```bash
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/androidTest/debug/app-debug-androidTest.apk
+adb shell am instrument -w -e holdSeconds 60 \
+  -e class nu.staldal.mws.WidgetAcceptanceInstrumentedTest \
+  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+The suite has two test methods covering these cases:
+
+- Missing records: temporarily delete the selection record for the installed multi-app
+  widget with the lowest ID and check that its production collection items contain
+  all configured apps in canonical order. Restore the original record on completion.
+- Maintenance and configuration: append three temporary apps, reserve a new generation
+  for the middle one without completing the clear, and select only those apps in the
+  same widget. Check row ordering, the disabled maintenance label, absence of a launch
+  ID, rejection by the production profile-attachment gate, and the disabled, unchecked
+  configuration choice. This shares the first test method with missing-record fallback.
+- Record cleanup: use an isolated maintenance database and in-memory configuration
+  database. Check provider `onDeleted`, the real app-removal journal's selection pruning,
+  native startup pruning of dangling selections, and widget reconciliation against the
+  real installed widget IDs. Check that reconciliation retains installed widget records
+  and leaves records belonging to the other provider untouched.
+
+When the terminal prints **Fixture ready**, press Home and find the widget showing:
+
+1. Widget test: before
+2. Widget test: clearing — Clearing site data…
+3. Widget test: after
+
+During the 60-second hold, confirm the middle row stays in place and shows the label.
+Tap it and confirm no web app opens. Return to Home if needed. The hold is optional:
+without `holdSeconds` the suite runs only its automatic assertions. The accepted range
+is 0–120 seconds.
+
+Do not edit apps or widget selections during this test. Its `finally` cleanup removes
+only its temporary apps, restores the chosen widget's prior selection record (or its
+absence), refreshes the widgets, and deletes the isolated database files. Let the run
+finish so cleanup can complete. A snapshot containing only widget/app IDs and selection
+metadata is saved atomically in backup-excluded storage before changing the live fixture.
+If instrumentation is interrupted, rerunning the first test restores that snapshot and
+removes leftover fixture apps before starting another fixture. The fixture's clear state is synthetic; no user app's
+profile state or site data is changed.
+
+Report the instrumentation output (expect **OK (2 tests)**), the observed maintenance
+row behavior in One UI, and whether the original widget selection was restored. Automatic
+assertions check the device collection items, rendered rows, configuration activity and
+storage paths; only the manual hold checks the actual launcher's rendering and tap handling.
+Neither these tests nor the development override qualify a release WebView provider.
+
+### Accessibility procedure (R§14)
+
+Run after installing debug and androidTest APKs. Install a single-app widget and a
+multi-app widget first. The shell-error case needs a WebView provider supporting
+multiple profiles; the test uses an isolated repository and a controlled HTTPS
+connection failure. Widget tests fail explicitly if their prerequisite is missing.
+
+```
+gradle testDebugUnitTest lintDebug compileDebugAndroidTestKotlin
+gradle connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=nu.staldal.mws.AccessibilityInstrumentedTest
+```
+
+The Espresso suite explicitly runs the AccessibilityChecks root assertion, with
+its default error severity, for empty/populated/reorder main screens, the editor,
+the editor's actual cookie confirmation, provider/shell errors, and both widget
+configuration screens. It supplies fixture apps for populated screens. Lint's
+HardcodedText error checks resource strings; app names and URLs remain user data.
+
+Repeat device acceptance in light and dark themes, with default and 200% text:
+
+- With TalkBack, traverse each screen in visual order. Check headings, field hints,
+  buttons, app names/URLs and maintenance states. Each app row should be one stop;
+  reorder rows offer Move up/Move down. Decorative icons should not add stops.
+- Confirm text remains readable, native text contrast is sufficient, and scrolling
+  makes all controls reachable on a small screen and in landscape.
+- Exercise URL/name validation, discovery, loading, save/clear failures, and shell
+  Retry. Check status announcements occur as states change without repeating on
+  every render, and that a visible error is still available when revisited.
+- Open Clear/Remove, sensitive-URL and origin-change dialogs and check their full
+  messages and action labels. Cancel must return focus to a sensible location.
+- Check widget All/Selected modes and active/CLEARING choices, including long app
+  names. Controls must have at least 48 dp touch targets.
+
+Automated results do not replace these TalkBack, text-scaling and contrast checks.
+Record device/provider, theme, text size and results in the issue before closure.
+
+### Pull-to-refresh procedure (R§9.2)
+
+Run on a supported provider with a configured HTTPS app containing a long page and a login form.
+
+1. At scroll top, drag downward and release past the refresh threshold. Verify the current page reloads and Back history is unchanged.
+2. Scroll down, then drag downward. Verify the page scrolls normally without reloading. A gesture starting below the top must not become a refresh when it reaches the top; begin a new gesture there.
+3. At the top, try an upward drag, a horizontal drag, a short downward drag, and a cancelled gesture. Verify none reloads.
+4. Complete a form-fill attempt, then refresh. Verify the reloaded document permits a fresh attempt and stale credential results cannot fill it.
+5. For an HTTP Basic-auth site, refresh and verify no new MyPass Basic-auth lookup is initiated. Cached authentication may continue to work; a new challenge is cancelled.
+6. Verify refresh is unavailable during initial loading, on an error overlay, and during Retry recovery. Rotate a loaded shell and verify pull-to-refresh still works without an automatic reload.
+
+JVM coverage in `ShellActivityTest` verifies scroll-top gating, gesture interception, reload dispatch, form-fill preparation, and Basic-auth retirement on reload. Actual WebView scrolling and provider/network behavior require this device pass.

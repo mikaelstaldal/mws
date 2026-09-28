@@ -10,10 +10,8 @@ twice; verify test counts before interpreting an unfiltered CI report.
 
 Build the debug app and test APKs from a clean, committed revision. For an unlisted
 provider, use the existing `DEBUG_PROVIDER_OVERRIDE=true` debug build option;
-release builds never permit this override. Install both APKs on the test device,
-then run:
-
-The operator can build, install and execute the complete sequence with:
+release builds never permit this override. The operator can build, install and
+execute the complete sequence with:
 
 ```sh
 scripts/run-provider-qualification.sh
@@ -65,8 +63,7 @@ Run all of `ShellNavigationInstrumentedTest`, including effective network policy
 loopback aliases, direct POST, POST-preserving 307 redirects, and the separate
 non-loopback IPv4 flows. Native-socket calibration verifies listener reachability
 before each address is tested. Record loopback and non-loopback results separately;
-a skipped non-loopback test is missing evidence. The original 872-byte loopback
-POST failure does not establish a global provider bypass.
+a skipped non-loopback test is missing evidence.
 
 For a direct blocked POST, accept either the shell's "HTTPS required" error or
 the unchanged, ready HTTPS fixture with no shell error. The provider can cancel
@@ -131,27 +128,14 @@ cleanup before starting a new preparation. Cleanup of a failed run supplies no
 qualification evidence. A saved port that cannot be rebound is a test failure;
 do not silently substitute a new worker origin.
 
+`scripts/run-provider-qualification.sh` is the reference for the exact phase
+order and expected test counts. To clean up after a failed preparation:
+
 ```sh
-adb shell am instrument -w -r \
-  -e class nu.staldal.mws.RestartQualificationInstrumentedTest#preparePersistedWorkerAndInterruptedMaintenance \
-  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-restart-prepare.txt 2>&1
-adb shell am force-stop nu.staldal.mws
-adb shell am instrument -w -r \
-  -e class nu.staldal.mws.RestartQualificationInstrumentedTest#interruptAfterProfileDeletionBeforeFinalCommit \
-  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-restart-delete.txt 2>&1
-adb shell am force-stop nu.staldal.mws
-adb shell am instrument -w -r \
-  -e class nu.staldal.mws.RestartQualificationInstrumentedTest#verifyPersistedWorkerAndResumeMaintenance \
-  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-restart-verify.txt 2>&1
 adb shell am force-stop nu.staldal.mws
 adb shell am instrument -w -r \
   -e class nu.staldal.mws.RestartQualificationInstrumentedTest#cleanupRestartFixture \
-  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-restart-cleanup.txt 2>&1
-adb shell am force-stop nu.staldal.mws
-adb shell am instrument -w -r \
-  -e class nu.staldal.mws.ProviderCompatibilitySuite \
-  -e sourceRevision SOURCE_COMMIT \
-  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner > provider-qualification.txt 2>&1
+  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner
 ```
 
 Review each report independently; a successful final invocation cannot erase
@@ -168,4 +152,5 @@ full-context cookie support from ordinary CookieManager reads.
 Only after every §15 flow has passing evidence, add a `PASS` matrix row. Run
 `gradle :app:generateProviderCompatibilityTable :app:verifyReleaseProviderCompatibility`
 and inspect the generated `GeneratedProviderFloors.kt` to confirm its package and
-floor. Until then keep the matrix blocked and the release verification failing.
+floor. A new entry is required whenever the pinned AndroidX WebKit version changes
+(A§15).
