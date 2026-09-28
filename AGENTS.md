@@ -14,8 +14,7 @@ decision. A bug fix should include a regression test where one is practical.
 
 - `spec/REQUIREMENTS.md`: functional requirements and acceptance criteria (what the app must do).
 - `spec/ARCHITECTURE.md`: technical design, constraints, data model, test strategy and the provider compatibility matrix (how it is built).
-- `spec/ACCEPTANCE.md`: criterion-to-test traceability and device acceptance procedures.
-- `spec/PROVIDER_QUALIFICATION.md`: how to qualify a WebView provider version for the matrix.
+- `spec/ACCEPTANCE.md`: criterion-to-test traceability, device acceptance procedures and WebView provider qualification.
 
 These documents describe the current behavior of the app. When a bug fix or
 feature changes requirements or architecture, update them in the same commit.
@@ -45,5 +44,5 @@ gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 
 You don't have access to test on a device or emulator. Ask the user to do that
 if necessary. A change that affects WebView provider behavior or bumps the
-AndroidX WebKit version needs a new provider qualification run
-(`scripts/run-provider-qualification.sh`, operator only) before release.
+AndroidX WebKit version needs a new provider qualification run before release
+(see "Provider qualification" in `spec/ACCEPTANCE.md`).

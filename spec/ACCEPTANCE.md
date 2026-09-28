@@ -34,7 +34,7 @@ adb shell am instrument -w -r nu.staldal.mws.test/androidx.test.runner.AndroidJU
 
 An unfiltered instrumentation scan may run `ProviderCompatibilitySuite` and its
 members twice. For provider qualification, use the explicit selection and process
-restart phases in [PROVIDER_QUALIFICATION.md](PROVIDER_QUALIFICATION.md), and
+restart phases in [provider qualification](#provider-qualification), and
 check the required counts and skips there. Run the [controlled device procedures](#controlled-device-procedures)
 when their rows below call for them. A failure or required skip is not a pass.
 
@@ -196,7 +196,7 @@ record the exact test URL and provider response, and verify the page is blocked
 when Safe Browsing is available. Check mixed active content with a controlled
 HTTP listener and require zero request bytes. Record provider and API behavior;
 an unsigned/uninstalled release build is **not run** for these checks. Use the
-provider qualification procedure for
+[provider qualification](#provider-qualification) procedure for
 POST, WebSocket, service-worker and non-loopback transport cases.
 
 ### M7 — isolation and maintenance (18–20, 30–33, 35, 39)
@@ -387,3 +387,62 @@ Run on a supported provider with a configured HTTPS app containing a long page a
 6. Verify refresh is unavailable during initial loading, on an error overlay, and during Retry recovery. Rotate a loaded shell and verify pull-to-refresh still works without an automatic reload.
 
 JVM coverage in `ShellActivityTest` verifies scroll-top gating, gesture interception, reload dispatch, form-fill preparation, and Basic-auth retirement on reload. Actual WebView scrolling and provider/network behavior require this device pass.
+
+## Provider qualification
+
+A release accepts a WebView provider package only at or above a version with a
+`PASS` row in the A§15 matrix. The build derives these floors from the matrix,
+and it fails if a `PASS` row's AndroidX WebKit version differs from the pinned one.
+Requalify when:
+
+- the AndroidX WebKit version in `gradle/libs.versions.toml` changes;
+- a new provider package, or a version below the current floor, must be supported;
+- a change affects profile handling, transport policy, Basic auth, form-fill
+  messaging, new-window routing or discovery in a way a device could observe
+  differently from JVM tests.
+
+Newer versions of a qualified package need no new run.
+
+### Run
+
+On a device with the target provider, from a clean committed revision, with
+`sdk.dir` or `ANDROID_HOME` set:
+
+```sh
+scripts/run-provider-qualification.sh
+```
+
+The runner builds with the debug-only `DEBUG_PROVIDER_OVERRIDE=true` so that an
+unlisted provider can run (release builds never permit it). It records build
+and device metadata, runs the four `RestartQualificationInstrumentedTest` phases
+and then `ProviderCompatibilitySuite` (37 tests), with a force-stop before each.
+It aborts on a failure, a required skip or an unexpected test count. Reports go
+to a new `provider-evidence-*` directory. An unfiltered instrumentation run can
+execute the suite and its member classes twice and skips the restart phases, so
+it does not count as qualification.
+
+If a phase fails, keep its report, then run cleanup before starting again:
+
+```sh
+adb shell am force-stop nu.staldal.mws
+adb shell am instrument -w -r \
+  -e class nu.staldal.mws.RestartQualificationInstrumentedTest#cleanupRestartFixture \
+  nu.staldal.mws.test/androidx.test.runner.AndroidJUnitRunner
+```
+
+### Adding a matrix row
+
+- Review every report independently; a later success does not erase an earlier
+  failure. A skipped or ignored required test is missing evidence, not a pass.
+  This includes the non-loopback cleartext tests.
+- The suite reports the provider package and version, device, Android/API, ABIs,
+  WebKit version and override. `sourceRevision` is only a label, so check the
+  build log against the installed APKs. The WebKit version must match
+  `gradle/libs.versions.toml`.
+- Any cleartext bytes reaching a listener, including through a loopback alias or
+  a POST-preserving redirect, make the provider incompatible. Do not waive it.
+- Full-context discovery cookies stay disabled unless separately qualified. The
+  credentialless fallback is what the suite qualifies.
+- Commit the evidence directory, then add the A§15 row linking to that commit.
+  Run `gradle :app:generateProviderCompatibilityTable :app:verifyReleaseProviderCompatibility`
+  and check the package and floor in the generated `GeneratedProviderFloors.kt`.

@@ -25,7 +25,26 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
-/** Run prepare, force-stop, then verify as separate instrumentation invocations; not in the Suite. */
+/**
+ * Process-restart provider qualification (A§15); not in the Suite. Run each phase as a separate
+ * instrumentation invocation with a force-stop in between, as `scripts/run-provider-qualification.sh` does:
+ *
+ * 1. Prepare: register a real service worker at a saved local HTTPS port, flush cookies in dedicated
+ *    profiles, interrupt production clear after its durable generation reservation, leave an
+ *    origin-change journal at cursor zero, and exercise loaded-profile clear/remove deferral,
+ *    durable tombstones and an orphaned discovery profile.
+ * 2. Delete: delete one retiring profile through production clear and interrupt before the final
+ *    configuration commit.
+ * 3. Verify: in a new process, reopen the same port/origin, observe a request from the persisted
+ *    worker without re-registering it, cancel the top-level auth challenge without a MyPass lookup
+ *    (a worker-free control must attempt one), and resume both maintenance records. Recovery requires
+ *    deleted old profiles, ACTIVE generation 1 and no old cookies; an unrelated control profile keeps
+ *    its cookie.
+ * 4. Cleanup: remove the fixture. Run it after any failed phase; it supplies no evidence itself.
+ *
+ * The fixture uses UUID profile names and an isolated store under `noBackupFilesDir`, and never touches
+ * saved user apps. A saved port that cannot be rebound is a failure, never a new worker origin.
+ */
 @RunWith(AndroidJUnit4::class)
 class RestartQualificationInstrumentedTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()

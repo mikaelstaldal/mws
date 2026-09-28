@@ -3,7 +3,7 @@ package nu.staldal.mws
 import org.junit.runner.RunWith
 import org.junit.runners.Suite
 
-/** Device evidence entry point; qualification also requires the checks in PROVIDER_QUALIFICATION.md. */
+/** Device evidence entry point; qualification also requires the restart phases in spec/ACCEPTANCE.md "Provider qualification". */
 @RunWith(Suite::class)
 @Suite.SuiteClasses(
     ProviderEvidenceInstrumentedTest::class,
