@@ -46,6 +46,28 @@ class NavigationPolicyTest {
         }
     }
 
+    @Test fun onlySchemeRefusalsReportTheDisallowedScheme() {
+        fun reported(url: String, mainFrame: Boolean = true): List<String?> = buildList {
+            NavigationPolicy.decide(url, mainFrame, redirect = false, gesture = true) { add(it) }
+        }
+        assertEquals(listOf("javascript"), reported("JavaScript:alert(1)"))
+        assertEquals(listOf("intent"), reported("intent://x#Intent;end", mainFrame = false))
+        assertEquals(listOf(null), reported("not a url"))
+        for (url in listOf("https://example.com/", "https://user@example.com/", "http://example.com/",
+            "mailto:a@example.com")) assertEquals(url, emptyList<String?>(), reported(url))
+        assertEquals(emptyList<String?>(), reported("mailto:a@example.com", mainFrame = false))
+        assertEquals(emptyList<String?>(), reported("data:text/html,x", mainFrame = false))
+    }
+
+    @Test fun disallowedSchemeLogIncludesTheUrlOnlyInDebugBuilds() {
+        val url = "javascript:steal('secret-token')"
+        val release = DisallowedSchemeLog.message("javascript", url, debug = false)
+        assertEquals("Blocked navigation with disallowed scheme javascript", release)
+        assertEquals("$release: $url", DisallowedSchemeLog.message("javascript", url, debug = true))
+        assertEquals("Blocked navigation with disallowed scheme <invalid>",
+            DisallowedSchemeLog.message(null, "not a url", debug = false))
+    }
+
     @Test fun subframeContentSchemesStayButOthersAreBlockedSilently() {
         assertEquals(NavigationDecision.Stay, sub("about:blank"))
         assertEquals(NavigationDecision.Stay, sub("data:text/html,x"))

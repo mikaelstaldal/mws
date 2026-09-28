@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
+import android.util.Log
 import android.view.ContextMenu
 import android.webkit.WebView
 import android.widget.Toast
@@ -40,8 +41,19 @@ object NavigationPolicy {
     /** Subframe content schemes that are never handed to another app. */
     private val subframeContent = setOf("about", "data", "blob")
 
-    fun decide(url: String, mainFrame: Boolean, redirect: Boolean, gesture: Boolean): NavigationDecision {
-        val scheme = url.substringBefore(':', "").lowercase(Locale.ROOT).takeIf(schemeSyntax::matches)
+    /**
+     * [onDisallowedScheme] receives the lowercased scheme (null when it is not valid scheme syntax)
+     * of a URL refused only for its scheme, not for its transport, frame or gesture.
+     */
+    /** The lowercased scheme, or null when [url] does not start with valid scheme syntax. */
+    fun scheme(url: String): String? =
+        url.substringBefore(':', "").lowercase(Locale.ROOT).takeIf(schemeSyntax::matches)
+
+    fun decide(
+        url: String, mainFrame: Boolean, redirect: Boolean, gesture: Boolean,
+        onDisallowedScheme: (String?) -> Unit = {},
+    ): NavigationDecision {
+        val scheme = scheme(url)
         fun block(message: Int) = NavigationDecision.Block(if (mainFrame) message else null)
         return when {
             scheme == "https" ->
@@ -53,8 +65,35 @@ object NavigationPolicy {
                 if (mainFrame && !redirect && gesture) NavigationDecision.Confirm(url, ExternalScheme.of(scheme)!!)
                 else block(R.string.shell_external_blocked)
             // javascript:, data:, file:, content:, intent: and every other scheme.
-            else -> block(R.string.shell_scheme_blocked)
+            else -> {
+                onDisallowedScheme(scheme)
+                block(R.string.shell_scheme_blocked)
+            }
         }
+    }
+}
+
+/**
+ * Info-level record of a navigation refused for its scheme. The full URL may carry credentials or
+ * other page data, so only a debug build includes it; a release build logs just the scheme.
+ */
+object DisallowedSchemeLog {
+    private const val TAG = "ShellNavigation"
+
+    fun message(scheme: String?, url: String, debug: Boolean): String {
+        val name = scheme ?: "<invalid>"
+        return if (debug) "Blocked navigation with disallowed scheme $name: $url"
+            else "Blocked navigation with disallowed scheme $name"
+    }
+
+    fun log(scheme: String?, url: String, debug: Boolean = BuildConfig.DEBUG) {
+        Log.i(TAG, message(scheme, url, debug))
+    }
+
+    /** For callers that accept HTTPS only: logs any refused scheme other than HTTP(S). */
+    fun logUnlessHttp(url: String) {
+        val scheme = NavigationPolicy.scheme(url)
+        if (scheme != "https" && scheme != "http") log(scheme, url)
     }
 }
 

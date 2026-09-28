@@ -12,6 +12,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.shadows.ShadowLog
 import java.time.Duration
 
 @RunWith(RobolectricTestRunner::class)
@@ -94,6 +95,18 @@ class NewWindowTransportTest {
         shadowOf(Looper.getMainLooper()).idle()
         assertTrue(results.isNotEmpty())
         assertTrue(results.all { it == null })
+        view.destroy()
+    }
+
+    @Test fun probeLogsOnlyDisallowedSchemes() {
+        val view = WebView(context)
+        ShadowLog.clear()
+        for (url in listOf("https://example.com/", "http://example.com/", "intent://x#Intent;end"))
+            WindowProbeClient(finish = {}).shouldOverrideUrlLoading(view, request(url))
+        val logged = ShadowLog.getLogsForTag("ShellNavigation")
+        assertEquals(1, logged.size)
+        assertEquals(android.util.Log.INFO, logged[0].type)
+        assertTrue(logged[0].msg.startsWith("Blocked navigation with disallowed scheme intent"))
         view.destroy()
     }
 

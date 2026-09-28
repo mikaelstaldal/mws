@@ -30,6 +30,7 @@ internal class WindowProbeClient(
     private val destination = WindowDestination()
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         if (request.url.scheme.equals("http", ignoreCase = true)) cleartext()
+        DisallowedSchemeLog.logUnlessHttp(request.url.toString())
         finish(destination.beforeLoad(request.url.toString(), request.method, request.isForMainFrame))
         return true
     }

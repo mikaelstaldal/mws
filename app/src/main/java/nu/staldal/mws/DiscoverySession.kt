@@ -214,6 +214,7 @@ class DiscoverySession(
                 }
                 return false
             }
+            DisallowedSchemeLog.logUnlessHttp(request.url.toString())
             if (request.isForMainFrame) failDocument(id, DiscoveryDocumentFailure.HTTPS_REQUIRED)
             return true
         }

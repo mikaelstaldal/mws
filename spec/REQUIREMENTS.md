@@ -247,6 +247,7 @@ Timers pause while a MyPass request started by that attempt is outstanding.
   - If no handler is installed, show a non-fatal error.
   - Confirmation never grants a scheme permanently.
   - `intent:` and every other scheme are blocked with a non-fatal message and never passed to Android.
+  - Each navigation blocked for its scheme (main frame or subframe, in the shell, a new window or discovery) is logged at info level with the scheme. Only a debug build also logs the full URL, since it may carry secrets.
   - Credential-like parameter scanning applies to each scheme's query and fragment components (for `mailto:`, the query after the address and any fragment), parsed as `&`-separated UTF-8 percent-decoded pairs without turning `+` into a space. Scheme payloads (recipient, number, coordinates, market path) are not scanned. Malformed or ambiguous components give a conservative "unparseable" warning.
 
 ### 9.4 Loading and errors

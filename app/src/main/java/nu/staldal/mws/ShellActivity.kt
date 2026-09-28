@@ -904,7 +904,9 @@ private class ShellWebViewClient(
 ) : WebViewClient() {
     override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
         val url = request.url.toString()
-        val decision = NavigationPolicy.decide(url, request.isForMainFrame, request.isRedirect, request.hasGesture())
+        val decision = NavigationPolicy.decide(url, request.isForMainFrame, request.isRedirect, request.hasGesture()) {
+            DisallowedSchemeLog.log(it, url)
+        }
         if (decision != NavigationDecision.Stay) {
             if (request.isForMainFrame) onCancelled()
             onIntercepted(decision)
