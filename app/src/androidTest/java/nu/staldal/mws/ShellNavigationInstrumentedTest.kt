@@ -109,8 +109,9 @@ class ShellNavigationInstrumentedTest {
                     .setHeader("Location", request.requestUrl?.queryParameter("target") ?: http)
                 "/qualification-worker.js" -> MockResponse().setHeader("Content-Type", "application/javascript")
                     .setBody("self.addEventListener('message', e => {" +
+                        "const reply=e.ports[0];" +
                         "e.waitUntil(fetch(e.data, {method:'POST',body:'fixture'}).then(" +
-                        "()=>e.source.postMessage('resolved'),e=>e.source.postMessage('rejected:'+e.name)));});")
+                        "()=>reply.postMessage('resolved'),e=>reply.postMessage('rejected:'+e.name)));});")
                 "/download" -> MockResponse().setHeader("Content-Type", "application/octet-stream")
                     .setHeader("Content-Disposition", "attachment; filename=a.bin").setBody("x")
                 else -> MockResponse().setHeader("Content-Type", "text/html").setBody("""
@@ -280,14 +281,21 @@ class ShellNavigationInstrumentedTest {
         SystemClock.sleep(3000)
         assertEquals("WebSocket listener read errors", 0, cleartextReadErrors.get())
         assertEquals("WebSocket cleartext bytes", 0, cleartextBytes.get())
-        evaluateChecked(view, "window.__workerSettled=false;window.__workerError=null;" +
-            "window.__workerOutcome=null;navigator.serviceWorker.addEventListener('message',e=>{" +
-            "window.__workerOutcome=e.data;window.__workerSettled=true;});" +
-            "navigator.serviceWorker.register('/qualification-worker.js').then(()=>navigator.serviceWorker.ready)" +
-            ".then(r=>r.active.postMessage('$target')).catch(e=>window.__workerError=String(e))")
-        await("worker HTTP fetch executed and settled") {
-            evaluateResult(view, "window.__workerSettled") == "true"
-        }
+        evaluateChecked(view, "window.__workerStage='registering';window.__workerError=null;" +
+            "window.__workerOutcome=null;" +
+            "navigator.serviceWorker.register('/qualification-worker.js')" +
+            ".then(()=>{window.__workerStage='registered';return navigator.serviceWorker.ready})" +
+            ".then(r=>{window.__workerStage='ready';const channel=new MessageChannel();" +
+            "channel.port1.onmessage=e=>{window.__workerOutcome=e.data;window.__workerStage='replied'};" +
+            "channel.port1.onmessageerror=()=>window.__workerError='messageerror';" +
+            "r.active.postMessage('$target',[channel.port2]);window.__workerStage='posted'})" +
+            ".catch(e=>{window.__workerError=String(e);window.__workerStage='error'})")
+        await("worker HTTP fetch executed and settled", diagnostics = {
+            "workerStage=${evaluateResult(view, "window.__workerStage")}; " +
+                "workerError=${evaluateResult(view, "window.__workerError")}; " +
+                "workerOutcome=${evaluateResult(view, "window.__workerOutcome")}; "
+        }) { evaluateResult(view, "window.__workerOutcome!==null || window.__workerError!==null") == "true" }
+        assertEquals("Worker setup error", "null", evaluateResult(view, "window.__workerError"))
         assertEquals("Worker must reject HTTP fetch", "\"rejected:TypeError\"",
             evaluateResult(view, "window.__workerOutcome"))
         SystemClock.sleep(3000)
@@ -432,13 +440,14 @@ class ShellNavigationInstrumentedTest {
         return result.get().getOrThrow()
     }
 
-    private fun await(description: String = "shell attached at initial URL", condition: () -> Boolean) {
+    private fun await(description: String = "shell attached at initial URL", diagnostics: () -> String = { "" },
+                      condition: () -> Boolean) {
         val deadline = SystemClock.uptimeMillis() + 15_000
         while (SystemClock.uptimeMillis() < deadline) {
             if (condition()) return
             SystemClock.sleep(50)
         }
-        fail("Timed out waiting for $description; " +
+        fail("Timed out waiting for $description; ${diagnostics()}" +
             "page=${diagnosticView?.let(::fixtureDocumentState)}; " +
             "requests=${synchronized(requestedPaths) { requestedPaths.toList() }}; " +
             "cleartextConnections=${cleartextConnections.get()}; " +
