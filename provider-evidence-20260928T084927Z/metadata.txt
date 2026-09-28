@@ -1,0 +1,23 @@
+Source revision: c03ceeadbafc55a2196689f5b1aec8257a463bac
+UTC date: 2026-09-28T08:49:27Z
+Build: DEBUG_PROVIDER_OVERRIDE=true gradle :app:assembleDebug :app:assembleDebugAndroidTest
+SM-S931B
+16
+36
+arm64-v8a
+Current WebView Update Service state
+  Current WebView package (name, version): (com.google.android.webview, 153.0.8010.36)
+  Minimum targetSdkVersion: 33
+  Minimum WebView version code: 733920733
+  Number of relros started: 1
+  Number of relros finished: 1
+  WebView package dirty: false
+  Any WebView package installed: true
+  Preferred WebView package (name, version): (com.google.android.webview, 153.0.8010.36)
+  WebView packages:
+    Valid package com.google.android.webview (versionName: 153.0.8010.36, versionCode: 801003603, targetSdkVersion: 36) is  installed/enabled for all users
+    com.google.android.webview.beta is NOT installed.
+    com.google.android.webview.dev is NOT installed.
+    com.google.android.webview.canary is NOT installed.
+    com.google.android.webview.debug is NOT installed.
+    com.android.webview is NOT installed.
