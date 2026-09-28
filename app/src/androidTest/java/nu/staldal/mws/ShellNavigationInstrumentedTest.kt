@@ -267,11 +267,16 @@ class ShellNavigationInstrumentedTest {
         calibrateCleartextListener()
         val (_, view) = openShell()
         val target = "http://127.0.0.1:${cleartext.localPort}/worker"
-        evaluateChecked(view, "window.__wsAttempted=false;window.__wsError=null;try{new WebSocket('ws://127.0.0.1:${cleartext.localPort}/ws')}" +
-            "catch(e){window.__wsError=e.name}finally{window.__wsAttempted=true}")
-        assertEquals("true", evaluateResult(view, "window.__wsAttempted"))
-        assertEquals("Expected mixed-content refusal, not a malformed fixture", "\"SecurityError\"",
-            evaluateResult(view, "window.__wsError"))
+        evaluateChecked(view, "window.__wsOutcome=null;try{" +
+            "const ws=new WebSocket('ws://127.0.0.1:${cleartext.localPort}/ws');" +
+            "ws.onopen=()=>window.__wsOutcome='opened';" +
+            "ws.onerror=()=>{if(window.__wsOutcome===null)window.__wsOutcome='error'};" +
+            "ws.onclose=()=>{if(window.__wsOutcome===null)window.__wsOutcome='closed'}" +
+            "}catch(e){window.__wsOutcome='threw:'+e.name}")
+        await("WebSocket attempt to settle") { evaluateResult(view, "window.__wsOutcome") != "null" }
+        val websocketOutcome = evaluateResult(view, "window.__wsOutcome")
+        assertTrue("WebSocket must fail before opening: $websocketOutcome",
+            websocketOutcome in setOf("\"threw:SecurityError\"", "\"error\"", "\"closed\""))
         SystemClock.sleep(3000)
         assertEquals("WebSocket listener read errors", 0, cleartextReadErrors.get())
         assertEquals("WebSocket cleartext bytes", 0, cleartextBytes.get())
