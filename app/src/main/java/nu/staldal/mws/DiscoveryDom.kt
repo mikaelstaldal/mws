@@ -11,8 +11,10 @@ data class DiscoveryDomLink(
     val type: String?, val crossorigin: String?, val referrerPolicy: String?,
     val sizes: String?, val usable: Boolean,
 )
+/** [refresh]: the resolved target of an immediate (zero-delay) meta refresh, if any. */
 data class DiscoveryDomSnapshot(
     val title: String?, val manifests: List<DiscoveryDomLink>, val icons: List<DiscoveryDomLink>,
+    val refresh: String? = null,
 ) {
     /** An unusable first matching candidate must not cause fall-through. */
     val selectedManifest: DiscoveryDomLink? get() = manifests.firstOrNull { it.mediaMatches }
@@ -38,7 +40,8 @@ internal object DiscoveryDom {
             if (root == null || token.nextClean() != '\u0000') null else {
                 val manifests = links(root.getJSONArray("manifests"), 16)
                 val icons = links(root.getJSONArray("icons"), 128)
-                DiscoveryDomSnapshot(string(root, "title"), manifests, icons)
+                DiscoveryDomSnapshot(string(root, "title"), manifests, icons,
+                    string(root, "refresh")?.takeIf { UrlPolicy.parseHttps(it) != null })
             }
         }
     } catch (_: Exception) { null }

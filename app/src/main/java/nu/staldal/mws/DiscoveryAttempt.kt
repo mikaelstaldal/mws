@@ -24,6 +24,8 @@ class DiscoveryAttempt(
     private var pausedTotal = 0L
     private var documentFinished = false
     private var finished = false
+    private var snapshotAccepted = false
+    private var follows = 0
     var documentResult: DiscoveryDocumentResult? = null
         private set
     val isPaused: Boolean get() = pausedAt != null
@@ -72,5 +74,33 @@ class DiscoveryAttempt(
         return true
     }
 
+    /**
+     * A committed same-origin document that navigates to another same-origin document before
+     * its DOM snapshot is accepted (an immediate meta refresh or a script redirect) was only a
+     * redirect page. Reopens the document stage so that the next commit becomes final.
+     */
+    fun follow(url: String): Boolean {
+        val committed = documentResult?.finalUrl
+        val target = UrlPolicy.parseHttps(url)
+        if (finished || !documentFinished || snapshotAccepted || committed == null ||
+            follows >= MAX_FOLLOWS || target == null || target.origin != configuredUrl.origin ||
+            target.serialized.substringBefore('#') == committed.substringBefore('#')) return false
+        follows++
+        documentFinished = false
+        documentResult = null
+        return true
+    }
+
+    /** Accepting the DOM snapshot of the committed document makes it final. */
+    fun acceptSnapshot(): Boolean {
+        if (finished || !documentFinished || documentResult?.finalUrl == null) return false
+        snapshotAccepted = true
+        return true
+    }
+
     fun finish() { finished = true }
+
+    companion object {
+        const val MAX_FOLLOWS = 5
+    }
 }

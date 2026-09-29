@@ -3,9 +3,10 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const script = fs.readFileSync('app/src/main/assets/discovery-dom.js', 'utf8');
-function run(links, readyState = 'complete', title = 'Page') {
-    const document = {readyState, title, querySelectorAll: selector => selector.startsWith('meta') ? [] : links};
-    return vm.runInNewContext(script, {document, TextEncoder, window: {matchMedia: media => ({matches: media !== 'print'})}});
+function run(links, readyState = 'complete', title = 'Page', metas = []) {
+    const document = {readyState, title, baseURI: 'https://example.com/base/',
+        querySelectorAll: selector => selector === 'meta[http-equiv]' ? metas : selector.startsWith('meta') ? [] : links};
+    return vm.runInNewContext(script, {document, TextEncoder, URL, window: {matchMedia: media => ({matches: media !== 'print'})}});
 }
 function link(rel, href, media = '') {
     return {rel, href: new URL(href, 'https://example.com/base/').href, media, type: 'application/manifest+json',
@@ -41,4 +42,19 @@ test('explicit link policy overrides conservative document fallback', () => {
     const item = link('manifest', 'm');
     item.referrerPolicy = 'same-origin';
     assert.equal(JSON.parse(run([item])).manifests[0].referrerPolicy, 'same-origin');
+});
+
+test('immediate meta refresh target is resolved; delayed or self refresh is not', () => {
+    const refresh = (content, httpEquiv = 'Refresh') => JSON.parse(run([], 'complete', '', [{httpEquiv, content}])).refresh;
+    assert.equal(refresh('0;url=/userapp/'), 'https://example.com/userapp/');
+    assert.equal(refresh('0; URL=\'next page\' trailing'), 'https://example.com/base/next%20page');
+    assert.equal(refresh('0.0, app'), 'https://example.com/base/app');
+    assert.equal(refresh('0.5;url=/later'), null);
+    assert.equal(refresh('5;url=/later'), null);
+    assert.equal(refresh('05;url=/later'), null);
+    assert.equal(refresh('0'), null);
+    assert.equal(refresh('0;url=/x', 'content-type'), null);
+    assert.equal(JSON.parse(run([], 'complete', '', [{httpEquiv: 'refresh', content: '5'},
+        {httpEquiv: 'refresh', content: '0;url=/x'}])).refresh, null);
+    assert.equal(JSON.parse(run([])).refresh, null);
 });

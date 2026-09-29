@@ -33,6 +33,14 @@ class DiscoveryDomTest {
         val json = snapshot(listOf(link()))
         assertEquals(DiscoveryDom.parse(json), DiscoveryDom.parseEvaluation(JSONObject.quote(json)))
     }
+    @Test fun onlyHttpsRefreshTargetIsKept() {
+        val base = JSONObject(snapshot(emptyList()))
+        assertNull(DiscoveryDom.parse(base.toString())!!.refresh)
+        assertEquals("https://example.com/userapp/",
+            DiscoveryDom.parse(base.put("refresh", "https://example.com/userapp/").toString())!!.refresh)
+        assertNull(DiscoveryDom.parse(base.put("refresh", "http://example.com/").toString())!!.refresh)
+        assertNull(DiscoveryDom.parse(base.put("refresh", "javascript:alert(1)").toString())!!.refresh)
+    }
     @Test fun reloadAndDuplicateCommitRejectOldDocument() {
         val gate = DiscoveryDomIdentity()
         gate.started()

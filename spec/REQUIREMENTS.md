@@ -121,7 +121,7 @@ It is not a general-purpose browser. It is a user-configured container for trust
 
 - Discovery runs after a syntactically valid URL has been unchanged for 500 ms, when the URL field loses focus, and on **Refresh site details**. Progress is shown.
 - Steps:
-  1. Follow redirects (subject to §10).
+  1. Follow redirects (subject to §10), including same-origin redirect pages (see §7.2).
   2. Record the final URL.
   3. Fetch a linked Web Application Manifest, if any.
   4. Resolve manifest fields and icon candidates.
@@ -140,6 +140,7 @@ It is not a general-purpose browser. It is a user-configured container for trust
 - A discovery failure never blocks saving a valid URL. The UI reports the failure and uses fallbacks.
 - Each stage (document, DOM, manifest, colors, name, icon) succeeds or falls back independently.
 - The final URL is the first committed main-frame URL when it is same-origin with the configured URL. A later stage failure does not discard it.
+- A committed same-origin document is a redirect page, not final, when it declares an immediate (zero-delay) meta refresh to another same-origin document, or starts another same-origin main-frame navigation before its DOM snapshot is taken. Discovery follows it, at most 5 times per attempt, and takes the final URL and metadata from the document it leads to. The redirect page's commit is used only if the followed navigation fails or times out.
 - If the first commit is on a different origin (for example an identity-provider login page), no final URL and no metadata are taken from it. A non-fatal notice says the site redirected to another origin.
 - With no commit: launch URL = normalized configured URL, scope = its origin, and `/favicon.ico` is requested from the configured origin. An uncommitted redirect URL is never treated as final.
 - A committed document without an eligible manifest link counts as a successful, empty manifest stage and clears the previous manifest snapshot.
@@ -152,7 +153,7 @@ The following defaults can be changed only at build time. Exceeding a limit give
 
 | Limit | Default |
 | --- | --- |
-| Initial document load | 15 s (spans redirects; stops at first commit or terminal error) |
+| Initial document load | 15 s (spans redirects and redirect pages; stops at first final commit or terminal error) |
 | Each manifest or icon resource | 10 s |
 | Overall attempt | 30 s (never resets) |
 | Redirects per resource chain | 10 |
@@ -428,3 +429,4 @@ Test traceability and end-to-end device procedures: [ACCEPTANCE.md](ACCEPTANCE.m
 41. Pull-to-refresh at page top reloads and permits a new form-fill attempt, and it is inactive when scrolled.
 42. `mailto:`, `tel:`, `sms:`, `geo:`, `market:`, `bankid:` and BankID's HTTPS autostart app link are delegated only after confirmation, and `intent:` is blocked. BankID autostart works for main-frame redirects and script navigation.
 43. `theme_color` tints the system bars and task description with legible icon contrast, and `background_color` paints before first paint; neither affects native screens.
+44. Discovery of a site whose start page is a same-origin redirect page (immediate meta refresh or script redirect) proposes the title and icon of the page it redirects to.

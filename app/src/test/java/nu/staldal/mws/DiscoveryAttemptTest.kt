@@ -57,4 +57,47 @@ class DiscoveryAttemptTest {
         assertFalse(cancelled.commit("https://example.com/late"))
         assertNull(cancelled.documentResult)
     }
+
+    @Test fun redirectPageBeforeSnapshotIsFollowedToTheNextSameOriginCommit() {
+        val state = DiscoveryAttempt(6, configured, DiscoveryTrigger.REFRESH)
+        state.start(0)
+        assertFalse(state.follow("https://example.com/userapp/"))
+        assertTrue(state.commit("https://example.com/start"))
+        assertFalse(state.follow("https://example.com/start#top"))
+        assertFalse(state.follow("https://login.example.net/"))
+        assertTrue(state.follow("https://example.com/userapp/"))
+        assertNull(state.documentResult)
+        assertFalse(state.acceptSnapshot())
+        assertEquals(1_000L, state.remainingInitial(14_000))
+        assertTrue(state.commit("https://example.com/userapp/"))
+        assertEquals("https://example.com/userapp/", state.documentResult?.finalUrl)
+        assertTrue(state.acceptSnapshot())
+        assertFalse(state.follow("https://example.com/later"))
+        assertEquals("https://example.com/userapp/", state.documentResult?.finalUrl)
+    }
+
+    @Test fun followingIsBoundedAndNeverLeavesCrossOriginOrFailedDocuments() {
+        val state = DiscoveryAttempt(7, configured, DiscoveryTrigger.REFRESH)
+        state.start(0)
+        repeat(DiscoveryAttempt.MAX_FOLLOWS) {
+            assertTrue(state.commit("https://example.com/hop$it"))
+            assertTrue(state.follow("https://example.com/hop${it + 1}"))
+        }
+        assertTrue(state.commit("https://example.com/last"))
+        assertFalse(state.follow("https://example.com/again"))
+        val crossOrigin = DiscoveryAttempt(8, configured, DiscoveryTrigger.REFRESH)
+        crossOrigin.start(0)
+        crossOrigin.commit("https://login.example.net/")
+        assertFalse(crossOrigin.follow("https://example.com/back"))
+        assertFalse(crossOrigin.acceptSnapshot())
+        val failed = DiscoveryAttempt(9, configured, DiscoveryTrigger.REFRESH)
+        failed.start(0)
+        failed.failDocument()
+        assertFalse(failed.follow("https://example.com/next"))
+        val finished = DiscoveryAttempt(10, configured, DiscoveryTrigger.REFRESH)
+        finished.start(0)
+        finished.commit("https://example.com/start")
+        finished.finish()
+        assertFalse(finished.follow("https://example.com/next"))
+    }
 }

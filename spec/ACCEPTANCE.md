@@ -98,6 +98,7 @@ class covers several behaviors.
 | 41 | J `ShellActivityTest.pullToRefreshIsBlockedUntilLoadedAndWheneverPageCanScrollUp`, `explicitReloadPreparesFormFillButCannotRearmBasicAuthentication` | [pull-to-refresh device procedure](#pull-to-refresh-procedure-r92) |
 | 42 | J `ShellActivityTest.allowlistedSchemeIsDelegatedOnlyAfterConfirmationEveryTime`, `bankIdAppLinkIsDelegatedAfterConfirmation`, `dangerousAndUnknownSchemesAreBlockedAndNeverPassedToAndroid`; `NavigationPolicyTest.bankIdAppLinkNeedsAnAutostartTokenAndMainFrame`; D `ShellNavigationInstrumentedTest.blockedAndUngesturedSchemesAreNeverPassedToAndroid` | M9; verify a real BankID login on a device, including a relying party with a non-null return URL (BankID may open the default browser instead of returning to MWS) |
 | 43 | J `ShellPresentationTest.wcagReferenceValuesAndIconSelection`, `paintsManifestBackgroundBeforeWebViewAndDoesNotChangeNativeWindow` | M12 |
+| 44 | D `DiscoverySessionInstrumentedTest.metaRefreshPageIsFollowedToItsSameOriginTarget`, `scriptRedirectPageIsFollowedToItsSameOriginTarget`; J `DiscoveryAttemptTest.redirectPageBeforeSnapshotIsFollowedToTheNextSameOriginCommit`, `followingIsBoundedAndNeverLeavesCrossOriginOrFailedDocuments`, `DiscoveryDomTest.onlyHttpsRefreshTargetIsKept`; script test `scripts/tests/discovery-dom.test.cjs` | M2 |
 
 ## Manual device procedures
 
@@ -116,7 +117,7 @@ and landscape. Navigate twice in the page; Back returns one page at a time, then
 closes the shell. Long-press the list row, edit its name, save, then reopen and
 remove it. Confirm the row disappears.
 
-### M2 — discovery, icons and failures (5–7, 16, 35)
+### M2 — discovery, icons and failures (5–7, 16, 35, 44)
 
 Add the manifest fixture and inspect proposed name, start URL, scope, colors and
 selected icon before saving. Add a page without a manifest: check title and
@@ -126,6 +127,9 @@ manifest, missing favicon and offline Refresh; the editor stays usable and a
 saved app keeps its prior icon. Change only the path and confirm icon and web
 session remain; change the origin, accept confirmation and verify old icon and
 session are gone. If discovery finds a new icon, verify it replaces the fallback.
+Add a site whose start page is a zero-delay meta refresh to a same-origin page
+(for example `https://my.charge.space/`) and check that the proposed name and
+icon come from the target page.
 
 ### M3 — authentication behavior (8–11, 23–25, 27, 36)
 

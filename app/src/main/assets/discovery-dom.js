@@ -34,6 +34,18 @@
         if (manifest && manifests.length < 16) manifests.push(item);
         if (icon && icons.length < 128) icons.push(item);
     }
-    const result = JSON.stringify({title: bounded(document.title), manifests, icons});
+    // Only the first refresh declaration counts, as in a browser. A zero delay marks a redirect page.
+    let refresh = null;
+    for (const meta of document.querySelectorAll('meta[http-equiv]')) {
+        if (meta.httpEquiv.toLowerCase() !== 'refresh') continue;
+        const match = /^\s*0+(?:\.0*)?\s*[;,]\s*(?:url\s*=\s*)?(['"]?)(.*)$/i.exec(meta.content);
+        if (match) {
+            let target = match[2].trim();
+            if (match[1] && target.indexOf(match[1]) >= 0) target = target.slice(0, target.indexOf(match[1]));
+            try { refresh = target ? bounded(new URL(target, document.baseURI).href) : null; } catch (_) {}
+        }
+        break;
+    }
+    const result = JSON.stringify({title: bounded(document.title), manifests, icons, refresh});
     return encoder.encode(result).length <= 1048576 ? result : null;
 })()

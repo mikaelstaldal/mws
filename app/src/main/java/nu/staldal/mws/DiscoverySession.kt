@@ -238,6 +238,7 @@ class DiscoverySession(
         override fun onPageStarted(view: WebView, url: String, favicon: Bitmap?) {
             identity.started()
             mainFrameUrl = url
+            attempt?.takeIf { it.id == id && id == generation && it.follow(url) }?.let { scheduleTimer() }
             if (id == generation) authentication?.started(url)
             if (id == generation && UrlPolicy.parseHttps(url) == null)
                 failDocument(id, DiscoveryDocumentFailure.HTTPS_REQUIRED)
@@ -263,8 +264,12 @@ class DiscoverySession(
                 if (raw == "\"mws-dom-pending\"") {
                     // DOM readiness may follow visible commit; bounded by the attempt deadline.
                     handler.postDelayed({ extract(view, state, document) }, 50)
-                } else {
-                    DiscoveryDom.parseEvaluation(raw)?.let { onSnapshot(state, it) }
+                } else DiscoveryDom.parseEvaluation(raw)?.let { snapshot ->
+                    val refresh = snapshot.refresh
+                    if (refresh != null && state.follow(refresh)) {
+                        scheduleTimer()
+                        view.loadUrl(refresh)
+                    } else if (state.acceptSnapshot()) onSnapshot(state, snapshot)
                 }
             }
         }

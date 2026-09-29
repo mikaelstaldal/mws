@@ -173,6 +173,49 @@ class DiscoverySessionInstrumentedTest {
         }
     }
 
+    @Test fun metaRefreshPageIsFollowedToItsSameOriginTarget() = assertRedirectPageFollowed(
+        """<html><head><meta http-equiv="Refresh" content="0;url=/app/"></head>
+            <body style="display:none">stub</body></html>""")
+
+    @Test fun scriptRedirectPageIsFollowedToItsSameOriginTarget() = assertRedirectPageFollowed(
+        """<html><head><script>location.replace('/app/')</script></head><body>stub</body></html>""")
+
+    private fun assertRedirectPageFollowed(stub: String) {
+        val profiles = testProfiles()
+        LocalHttpsServer().use { server ->
+            val targetUrl = server.url.resolve("/app/").toString()
+            server.dispatch { request ->
+                if (request.path == "/app/") MockResponse().setHeader("Content-Type", "text/html")
+                    .setBody("""<html><head><title>Target</title><link rel="icon" href="/icon.png">
+                        </head><body>app</body></html>""")
+                else MockResponse().setHeader("Content-Type", "text/html").setBody(stub)
+            }
+            val snapshotted = CountDownLatch(1)
+            val documents = mutableListOf<DiscoveryDocumentResult>()
+            val snapshot = AtomicReference<DiscoveryDomSnapshot>()
+            lateinit var session: DiscoverySession
+            ActivityScenario.launch(EditorActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    val host = FrameLayout(activity)
+                    activity.addContentView(host, FrameLayout.LayoutParams(
+                        ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
+                    session = DiscoverySession(host, profiles, activity.lifecycleScope,
+                        { _, document -> synchronized(documents) { documents += document } }, { }, { },
+                        onSnapshot = { _, dom -> snapshot.set(dom); snapshotted.countDown() })
+                    session.refresh(server.url.toString())
+                }
+                try {
+                    assertTrue("No snapshot", snapshotted.await(20, TimeUnit.SECONDS))
+                    assertEquals("Target", snapshot.get().title)
+                    assertEquals(server.url.resolve("/icon.png").toString(), snapshot.get().icons.single().url)
+                    assertEquals(targetUrl, synchronized(documents) { documents.last().finalUrl })
+                } finally {
+                    runBlocking(Dispatchers.Main) { session.close() }
+                }
+            }
+        }
+    }
+
     @Test fun firstVisibleCommitRequiresAnAttachedDisposableWebView() {
         val profiles = testProfiles()
         LocalHttpsServer().use { server ->
