@@ -64,6 +64,7 @@ It is not a general-purpose browser. It is a user-configured container for trust
 - Tap a row to launch the app. Long-press a row to open its editor.
 - **Reorder** mode: drag rows by a visible handle, with equivalent accessibility move-up/move-down actions. **Done** saves; **Cancel** restores the previous order without writing anything.
 - A clearly visible **Add** action, preferably a Material FAB labelled "Add web app".
+- An HTTPS URL field and **Open URL without saving** action launch a typed URL directly in a shell. The same URL validation as the editor applies. Opening it does not run discovery or add a configured app.
 - An empty state explains that no apps are configured and offers Add.
 - The manual order is the single canonical order for the main list and all widgets. New apps are appended to the end. Removing an app closes the gap. Editing or renaming an app does not move it.
 - Duplicate names and duplicate URLs are allowed.
@@ -208,6 +209,8 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 - Icons are stored privately, keyed by the app's stable ID. The list and widgets render from local storage and never need the network.
 
 ## 9. Web app shell
+
+- An ad-hoc shell uses the same navigation, presentation, error, retry and permission behavior as a saved shell. It has its own disposable web profile, which is retired when the shell closes, and does not use automatic MyPass Basic authentication or form fill. Site permission choices in this mode are not persisted.
 
 ### 9.1 Presentation
 
@@ -430,3 +433,4 @@ Test traceability and end-to-end device procedures: [ACCEPTANCE.md](ACCEPTANCE.m
 42. `mailto:`, `tel:`, `sms:`, `geo:`, `market:`, `bankid:` and BankID's HTTPS autostart app link are delegated only after confirmation, and `intent:` is blocked. BankID autostart works for main-frame redirects and script navigation.
 43. `theme_color` tints the system bars and task description with legible icon contrast, and `background_color` paints before first paint; neither affects native screens.
 44. Discovery of a site whose start page is a same-origin redirect page (immediate meta refresh or script redirect) proposes the title and icon of the page it redirects to.
+45. A valid HTTPS URL entered on the main screen opens immediately in an unsaved shell with an isolated disposable profile. It runs no discovery, creates no configured app, and never requests automatic authentication. Closing the shell retires its profile.

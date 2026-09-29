@@ -112,6 +112,45 @@ class ShellActivityTest {
         assertNull(info.taskAffinity?.takeIf { it != context.packageName })
     }
 
+    @Test fun adHocLaunchUsesDisposableProfileAndLeavesNoConfiguration() {
+        val intent = ShellActivity.adHocIntent(context, "https://example.com/quick")
+        assertEquals("https://example.com/quick", ShellActivity.adHocUrlOf(intent))
+        assertNull(intent.extras)
+        assertNotNull(ShellActivity.appIdOf(intent))
+        val activity = launch(intent)
+        val view = awaitWebView(activity)
+        assertEquals("https://example.com/quick", view.url)
+        await { taskDescription(activity)?.label == "example.com" }
+        assertTrue(backend.bound.single().startsWith("mws-disposable-"))
+        assertTrue(onMain { repository.ordered() }.isEmpty())
+        controllers.last().pause().stop().destroy()
+        await { backend.deleteCalls.contains(backend.bound.single()) }
+        assertNull(ShellActivity.adHocUrlOf(intent))
+    }
+
+    @Test fun adHocIntentRejectsInvalidUrls() {
+        assertThrows(IllegalArgumentException::class.java) {
+            ShellActivity.adHocIntent(context, "http://example.com/")
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            ShellActivity.adHocIntent(context, "https://user@example.com/")
+        }
+    }
+
+    @Test fun adHocLaunchNeverRequestsMyPass() {
+        installMyPass()
+        val activity = launch(ShellActivity.adHocIntent(context, "https://example.com/private"))
+        val view = awaitWebView(activity)
+        val holder = ReflectionHelpers.getField<ShellHolder>(activity, "holder")
+        assertNull(ReflectionHelpers.getField<FormFillEngine?>(holder, "formFill"))
+        Shadows.shadowOf(view).webViewClient.shouldInterceptRequest(view,
+            request("https://example.com/private", "GET"))
+        val answer = Answer()
+        basicAuth(activity).challenge(answer, "example.com", "Private")
+        assertEquals(listOf("cancel"), answer.calls)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivityForResult)
+    }
+
     @Test fun forgedIntentsAreRejectedBeforeAnyProfileIsBound() {
         val app = addApp()
         val base = ShellActivity.intent(context, app.id)

@@ -3,6 +3,7 @@ package nu.staldal.mws
 import android.view.View
 import android.widget.LinearLayout
 import android.widget.TextView
+import android.widget.EditText
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.*
@@ -73,6 +74,28 @@ class MainScreenTest {
         val fab = Shadows.shadowOf(activity).nextStartedActivity
         assertEquals(EditorActivity::class.java.name, fab.component?.className)
         assertNull(fab.getStringExtra(EditorActivity.EXTRA_APP_ID))
+        controller.pause().stop().destroy()
+    }
+
+    @Test fun quickLaunchValidatesAndOpensWithoutAddingAnApp() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        val key = ProviderKey("test.webview", "1.0", 31, "x86")
+        org.robolectric.util.ReflectionHelpers.setField(activity, "compatibility",
+            ProviderCompatibility({ ProviderSnapshot(key, true) },
+                { ProviderSelfTestResult(key, true, true, true, true, true, true) },
+                floors = mapOf(key.packageName to listOf(1))))
+        val input = activity.findViewById<EditText>(R.id.quick_url)
+        input.setText("http://example.com")
+        activity.findViewById<View>(R.id.quick_launch).performClick()
+        assertNotNull(input.error)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        input.setText("example.com/path")
+        activity.findViewById<View>(R.id.quick_launch).performClick()
+        val launched = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(ShellActivity::class.java.name, launched.component?.className)
+        assertEquals("https://example.com/path", ShellActivity.adHocUrlOf(launched))
+        assertTrue(runBlocking { ConfigurationRepository(database).ordered().isEmpty() })
         controller.pause().stop().destroy()
     }
 

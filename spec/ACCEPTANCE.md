@@ -99,6 +99,7 @@ class covers several behaviors.
 | 42 | J `ShellActivityTest.allowlistedSchemeIsDelegatedOnlyAfterConfirmationEveryTime`, `bankIdAppLinkIsDelegatedAfterConfirmation`, `dangerousAndUnknownSchemesAreBlockedAndNeverPassedToAndroid`; `NavigationPolicyTest.bankIdAppLinkNeedsAnAutostartTokenAndMainFrame`; D `ShellNavigationInstrumentedTest.blockedAndUngesturedSchemesAreNeverPassedToAndroid` | M9; verify a real BankID login on a device, including a relying party with a non-null return URL (BankID may open the default browser instead of returning to MWS) |
 | 43 | J `ShellPresentationTest.wcagReferenceValuesAndIconSelection`, `paintsManifestBackgroundBeforeWebViewAndDoesNotChangeNativeWindow` | M12 |
 | 44 | D `DiscoverySessionInstrumentedTest.metaRefreshPageIsFollowedToItsSameOriginTarget`, `scriptRedirectPageIsFollowedToItsSameOriginTarget`; J `DiscoveryAttemptTest.redirectPageBeforeSnapshotIsFollowedToTheNextSameOriginCommit`, `followingIsBoundedAndNeverLeavesCrossOriginOrFailedDocuments`, `DiscoveryDomTest.onlyHttpsRefreshTargetIsKept`; script test `scripts/tests/discovery-dom.test.cjs` | M2 |
+| 45 | J `MainScreenTest.quickLaunchValidatesAndOpensWithoutAddingAnApp`, `ShellActivityTest.adHocLaunchUsesDisposableProfileAndLeavesNoConfiguration`, `adHocIntentRejectsInvalidUrls`, `adHocLaunchNeverRequestsMyPass` | M1, M7 |
 
 ## Manual device procedures
 
@@ -107,7 +108,7 @@ only disposable sites and accounts. If a step cannot be run, mark its criteria
 **not run** and state why. Controlled fixture tests can supply the server log,
 but they do not replace the real launcher, Recents, MyPass and backup observations.
 
-### M1 — basic app flow (1–4, 34)
+### M1 — basic app flow (1–4, 34, 45)
 
 Add `example.com` with a name; confirm the stored URL is HTTPS. Try
 `http://localhost:8080` and another HTTP URL; both must fail inline validation.
@@ -116,6 +117,9 @@ list. Check full-screen content and the bottom system navigation inset in portra
 and landscape. Navigate twice in the page; Back returns one page at a time, then
 closes the shell. Long-press the list row, edit its name, save, then reopen and
 remove it. Confirm the row disappears.
+Enter `example.com/path` in the main-screen URL field and open it without saving.
+Confirm the shell loads HTTPS directly, Back works, no entry appears in the list,
+and MyPass is never queried. HTTP input must show an error without opening a shell.
 
 ### M2 — discovery, icons and failures (5–7, 16, 35, 44)
 
@@ -203,7 +207,7 @@ an unsigned/uninstalled release build is **not run** for these checks. Use the
 [provider qualification](#provider-qualification) procedure for
 POST, WebSocket, service-worker and non-loopback transport cases.
 
-### M7 — isolation and maintenance (18–20, 30–33, 35, 39)
+### M7 — isolation and maintenance (18–20, 30–33, 35, 39, 45)
 
 Create entries A1 and A2 for the *same* controlled origin and open both at once.
 In A1 set a login cookie, local/session storage, IndexedDB, Cache Storage, a
@@ -219,8 +223,10 @@ has none of the old state; A2 retains all its values. Verify A1's metadata, icon
 order, widgets and MyPass entry are unchanged. Put fresh state in A1, then
 remove it: it disappears at once and A2 remains intact. Inspect its retired
 profile directory through `run-as` and confirm it has been deleted; re-add the
-same origin as a new app and verify it has no prior cookies or storage. Repeat
-clear/removal after a provider-compatibility failure
+same origin as a new app and verify it has no prior cookies or storage. Open an
+ad-hoc shell for the same origin: it must see neither app's state, and its
+profile must be retired after closing its shell. Repeat clear/removal after a
+provider-compatibility failure
 using the restart qualification fixture; native removal is immediate and pending
 web-data deletion completes after a compatible restart. Inspect the retired
 profile directory again after recovery and verify the other profile still has

@@ -10,6 +10,7 @@ import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.ImageView
+import android.widget.EditText
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
@@ -49,6 +50,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var done: View
     private lateinit var cancel: View
     private lateinit var addButton: View
+    private lateinit var quickLaunch: View
+    private lateinit var quickUrlInput: View
+    private var quickLaunching = false
 
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -66,6 +70,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        quickLaunching = false
+        quickLaunch.isEnabled = true
         compatibilityEntry.visibility = View.GONE
         lifecycleScope.launch {
             progress.setText(R.string.provider_self_test_running)
@@ -145,6 +151,46 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(12))
         }
         column.addView(heading)
+        val urlInput = EditText(this).apply {
+            id = R.id.quick_url
+            hint = getString(R.string.editor_url_helper)
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+            maxLines = 1
+            setSingleLine(true)
+            imeOptions = android.view.inputmethod.EditorInfo.IME_ACTION_GO
+        }
+        quickUrlInput = urlInput
+        column.addView(urlInput)
+        quickLaunch = com.google.android.material.button.MaterialButton(this).apply {
+            id = R.id.quick_launch
+            setText(R.string.quick_launch)
+            setOnClickListener {
+                if (quickLaunching) return@setOnClickListener
+                val validation = UrlPolicy.validateUserInput(urlInput.text.toString())
+                if (validation !is UrlPolicy.UserInput.Valid) {
+                    urlInput.error = getString(when (validation) {
+                        UrlPolicy.UserInput.Empty -> R.string.editor_url_required
+                        UrlPolicy.UserInput.HttpsRequired -> R.string.shell_https_required
+                        UrlPolicy.UserInput.TooLong -> R.string.editor_url_too_long
+                        else -> R.string.editor_url_invalid
+                    })
+                } else if (!compatibility.current().compatible) {
+                    startActivity(Intent(this@MainActivity, ProviderErrorActivity::class.java))
+                } else {
+                    urlInput.error = null
+                    quickLaunching = true
+                    isEnabled = false
+                    startActivity(ShellActivity.adHocIntent(this@MainActivity, validation.url.serialized))
+                }
+            }
+        }
+        urlInput.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == android.view.inputmethod.EditorInfo.IME_ACTION_GO) {
+                quickLaunch.performClick()
+                true
+            } else false
+        }
+        column.addView(quickLaunch)
         val controls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun button(viewId: Int, label: Int, action: () -> Unit): View =
             com.google.android.material.button.MaterialButton(this).apply {
@@ -232,6 +278,8 @@ class MainActivity : AppCompatActivity() {
         done.isEnabled = !saving
         cancel.isEnabled = !saving
         addButton.visibility = if (editing) View.GONE else View.VISIBLE
+        quickLaunch.visibility = if (editing) View.GONE else View.VISIBLE
+        quickUrlInput.visibility = quickLaunch.visibility
         val byId = currentApps.associateBy { it.id }
         val displayed = draft?.mapNotNull { byId[it] } ?: currentApps
         render(displayed)

@@ -51,6 +51,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
+import java.util.UUID
 import kotlinx.coroutines.withContext
 
 /**
@@ -73,12 +74,14 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        webPermissions = WebPermissions(this, savedInstanceState) { holder?.record }
+        val adHocUrl = adHocUrlOf(intent)
+        webPermissions = WebPermissions(this, savedInstanceState, { holder?.record },
+            persistDecisions = adHocUrl == null)
         myPass = MyPassClient(this)
         myPass.restoreIdentity(savedInstanceState)
         handoff = ShellHandoff(this)
         val appId = appIdOf(intent)
-        if (appId == null) {
+        if (appId == null || (intent.action == ACTION_OPEN_AD_HOC && adHocUrl == null)) {
             finishAndRemoveTask()
             return
         }
@@ -116,7 +119,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         val services = ShellServices.shared(this)
         // Saved instance state is ignored: a holder survives only configuration changes, and after
         // process death a fresh holder loads the resolved launch URL (A§9.2).
-        holder = ViewModelProvider(this, ShellHolder.Factory(services, appId, applicationContext))
+        holder = ViewModelProvider(this, ShellHolder.Factory(services, appId, applicationContext, adHocUrl))
             .get(ShellHolder::class.java)
         holder?.attach(this)
         renderOverlay()
@@ -274,6 +277,8 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     companion object {
         const val SCHEME = "mws-app"
         const val ACTION_OPEN = "nu.staldal.mws.action.OPEN_APP"
+        private const val ACTION_OPEN_AD_HOC = "nu.staldal.mws.action.OPEN_URL"
+        private val adHocLaunches = mutableMapOf<String, String>()
 
         /** The only way to open a shell: the data URI identifies the app and its document task. */
         fun intent(context: Context, appId: String): Intent {
@@ -284,9 +289,27 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
         }
 
+        fun adHocIntent(context: Context, url: String): Intent {
+            val canonical = UrlPolicy.normalizeUserInput(url)?.serialized
+            require(canonical == url) { "Invalid ad-hoc URL" }
+            val id = UUID.randomUUID().toString()
+            adHocLaunches[id] = url
+            return Intent(context, ShellActivity::class.java)
+                .setAction(ACTION_OPEN_AD_HOC)
+                .setData(Uri.parse("$SCHEME:$id"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+        }
+
+        fun adHocUrlOf(intent: Intent?): String? {
+            if (intent?.action != ACTION_OPEN_AD_HOC) return null
+            return appIdOf(intent)?.let(adHocLaunches::get)
+        }
+
+        internal fun forgetAdHoc(appId: String) { adHocLaunches.remove(appId) }
+
         /** Accepts exactly `mws-app:<opaque ID>`; anything else, including a URL, is rejected. */
         fun appIdOf(intent: Intent?): String? {
-            if (intent?.action != ACTION_OPEN) return null
+            if (intent?.action != ACTION_OPEN && intent?.action != ACTION_OPEN_AD_HOC) return null
             val data = intent.dataString ?: return null
             if (!data.startsWith("$SCHEME:")) return null
             return data.removePrefix("$SCHEME:").takeIf(ProfileNames::isOpaqueId)
@@ -312,6 +335,7 @@ class ShellHolder(
     private val services: ShellServices,
     val appId: String,
     private val application: Context,
+    private val adHocUrl: String? = null,
 ) : ViewModel() {
     interface Host {
         fun onReady(webView: WebView)
@@ -326,6 +350,9 @@ class ShellHolder(
     }
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private val cleanupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var disposableProfile: DisposableProfile? = null
+    private var cleared = false
 
     /** WebView context; points at the attached activity while there is one. */
     private val context = MutableContextWrapper(application)
@@ -357,7 +384,7 @@ class ShellHolder(
     private var basicAuth = newBasicAuth()
 
     private fun newBasicAuth(eligible: () -> Boolean = { false }) = ShellBasicAuth(
-        enabled = { services.compatibility.current().features.basicAuth && closed == null },
+        enabled = { adHocUrl == null && services.compatibility.current().features.basicAuth && closed == null },
         client = { (host as? ShellActivity)?.myPass },
         flow = appId,
         eligible = eligible,
@@ -420,15 +447,27 @@ class ShellHolder(
     private fun start() {
         if (started) return
         started = true
-        scope.launch {
+        if (adHocUrl == null) scope.launch {
             services.repository.observe(appId).catch { }.collect(::onRecordChanged)
         }
         scope.launch {
             val result = try {
                 services.awaitStartup()
-                // Registered before attaching, so a concurrent Clear or Remove always reaches it.
-                unregister = services.shells.register(appId) { close(CloseReason.RETIRED) }
-                services.profiles.createAppWebView(context, appId)
+                if (adHocUrl == null) {
+                    // Registered before attaching, so a concurrent Clear or Remove always reaches it.
+                    unregister = services.shells.register(appId) { close(CloseReason.RETIRED) }
+                    services.profiles.createAppWebView(context, appId)
+                } else {
+                    val profile = withContext(kotlinx.coroutines.NonCancellable) {
+                        services.profiles.createDisposableProfile()?.also {
+                            disposableProfile = it
+                            if (cleared || closed != null) retireAdHocProfile()
+                        }
+                    }
+                    if (profile == null) return@launch close(CloseReason.FAILED)
+                    if (cleared || closed != null) return@launch
+                    services.profiles.createDisposableWebView(context, profile)
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -454,18 +493,23 @@ class ShellHolder(
         }
         hasVisiblePaint = false
         basicAuth.close()
-        basicAuth = newBasicAuth(attached.basicAuthSafe)
+        basicAuth = newBasicAuth(if (adHocUrl == null) attached.basicAuthSafe else ({ false }))
         bound = attached
         val app = try {
-            services.repository.get(appId)
+            if (adHocUrl != null) {
+                val url = UrlPolicy.parseHttps(adHocUrl) ?: return close(CloseReason.FAILED)
+                ConfiguredApp(appId, url.host, NameSource.USER_EDITED, adHocUrl, null,
+                    adHocUrl, EditorDraft.originScope(url), createdAt = 0, updatedAt = 0)
+            } else services.repository.get(appId)
         } catch (e: CancellationException) {
             throw e
         } catch (_: Exception) {
             null
         }
         if (closed != null) return
-        if (app == null || !isCurrent(app)) return close(CloseReason.UNAVAILABLE)
+        if (app == null || (adHocUrl == null && !isCurrent(app))) return close(CloseReason.UNAVAILABLE)
         record = app
+        if (adHocUrl != null) host?.onRecord(app)
         // Records are validated on save; this guards the one navigation this task performs.
         if (!app.launchUrl.startsWith("https://")) return close(CloseReason.FAILED)
         // No suspension from here on: nothing can close the shell before the load starts, and
@@ -475,7 +519,7 @@ class ShellHolder(
         applyThirdPartyCookies(app.allowThirdPartyCookies)
         if (closed != null) return
         ready = true
-        installFormFill(webView)
+        if (adHocUrl == null) installFormFill(webView)
         installClient(webView)
         host?.onReady(webView)
         load(webView, app.launchUrl, initial = true)
@@ -531,7 +575,14 @@ class ShellHolder(
         unregister?.invoke()
         unregister = null
         release()
+        retireAdHocProfile()
         host?.onClosed(reason)
+    }
+
+    private fun retireAdHocProfile() {
+        val profile = disposableProfile ?: return
+        disposableProfile = null
+        cleanupScope.launch { services.profiles.retireDisposable(profile) }
     }
 
     private fun release() {
@@ -546,11 +597,14 @@ class ShellHolder(
     }
 
     override fun onCleared() {
+        cleared = true
         stopTimer()
         scope.cancel()
         unregister?.invoke()
         unregister = null
         release()
+        retireAdHocProfile()
+        if (adHocUrl != null) ShellActivity.forgetAdHoc(appId)
     }
 
     /** Called by the credential flow while an external MyPass request is outstanding. */
@@ -775,7 +829,9 @@ class ShellHolder(
             scope.launch {
                 try {
                     val old = bound
-                    val result = services.profiles.createAppWebView(context, appId)
+                    val result = if (adHocUrl == null) services.profiles.createAppWebView(context, appId)
+                        else disposableProfile?.let { services.profiles.createDisposableWebView(context, it) }
+                            ?: AttachResult.Blocked(AttachBlock.NOT_REGISTERED)
                     if (result is AttachResult.Blocked) {
                         when (result.reason) {
                             AttachBlock.CLEARING, AttachBlock.MISSING_APP -> close(CloseReason.RETIRED)
@@ -785,17 +841,17 @@ class ShellHolder(
                         return@launch
                     }
                     val replacement = (result as AttachResult.Attached).bound
-                    if (closed != null || record?.let {
+                    if (closed != null || (adHocUrl == null && record?.let {
                         it.profileState == ProfileState.ACTIVE &&
                             replacement.profileName == ProfileNames.app(it.id, it.profileGeneration)
-                    } != true) {
+                    } != true)) {
                         services.profiles.release(replacement)
                         return@launch
                     }
                     formFill?.close()
                     formFill = null
                     basicAuth.close()
-                    basicAuth = newBasicAuth(replacement.basicAuthSafe)
+                    basicAuth = newBasicAuth(if (adHocUrl == null) replacement.basicAuthSafe else ({ false }))
                     bound = replacement
                     old?.let {
                         (it.webView.parent as? ViewGroup)?.removeView(it.webView)
@@ -804,7 +860,7 @@ class ShellHolder(
                     ShellWebSettings.apply(replacement.webView, BuildConfig.DEBUG)
                     appliedThirdPartyCookies = null
                     applyThirdPartyCookies(record!!.allowThirdPartyCookies)
-                    installFormFill(replacement.webView)
+                    if (adHocUrl == null) installFormFill(replacement.webView)
                     installClient(replacement.webView)
                     host?.onReady(replacement.webView)
                     load(replacement.webView, target, initial = true)
@@ -847,11 +903,12 @@ class ShellHolder(
         private val services: ShellServices,
         private val appId: String,
         private val application: Context,
+        private val adHocUrl: String? = null,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T {
             require(modelClass == ShellHolder::class.java)
-            return ShellHolder(services, appId, application) as T
+            return ShellHolder(services, appId, application, adHocUrl) as T
         }
     }
 }

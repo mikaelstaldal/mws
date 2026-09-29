@@ -19,6 +19,7 @@ internal class WebPermissions(
     private val activity: ShellActivity,
     savedState: android.os.Bundle? = null,
     private val app: () -> ConfiguredApp?,
+    private val persistDecisions: Boolean = true,
 ) : WebChromeClient() {
     var newWindow: ((WebView, Boolean, android.os.Message) -> Boolean)? = null
 
@@ -125,13 +126,13 @@ internal class WebPermissions(
                 if (!allow) result(false) else androidPermission(arrayOf(
                     Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION), ::result)
             }
-            when (store.permissionDecision(record.id, record.profileGeneration, canonical,
-                PermissionCapability.GEOLOCATION)?.decision) {
+            when (if (persistDecisions) store.permissionDecision(record.id, record.profileGeneration,
+                canonical, PermissionCapability.GEOLOCATION)?.decision else null) {
                 SiteDecision.SITE_ALLOW -> site(true)
                 SiteDecision.SITE_DENY -> site(false)
                 null -> confirm(canonical, R.string.web_permission_location, canceled = { result(false) }) { allow ->
-                    store.putPermissionDecision(PermissionDecision(record.id, record.profileGeneration,
-                        canonical, PermissionCapability.GEOLOCATION,
+                    if (persistDecisions) store.putPermissionDecision(PermissionDecision(record.id,
+                        record.profileGeneration, canonical, PermissionCapability.GEOLOCATION,
                         if (allow) SiteDecision.SITE_ALLOW else SiteDecision.SITE_DENY))
                     site(allow)
                 }

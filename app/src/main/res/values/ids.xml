@@ -9,6 +9,8 @@
     <item name="empty_state" type="id" />
     <item name="empty_add" type="id" />
     <item name="add_web_app" type="id" />
+    <item name="quick_url" type="id" />
+    <item name="quick_launch" type="id" />
     <item name="app_icon" type="id" />
     <item name="app_name_text" type="id" />
     <item name="app_url_text" type="id" />
