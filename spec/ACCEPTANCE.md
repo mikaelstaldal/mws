@@ -95,7 +95,7 @@ class covers several behaviors.
 | 38 | J `ProfileManagerTest.missingSentinelNormalizesRestoreWithoutDeletingProfiles`, `ConfigurationRepositoryTest`; D `ConfigurationMigrationTest` | M11 |
 | 39 | J `MainScreenTest.clearingRowKeepsPositionAndExplainsTap`, `MultiWidgetTest.instanceSelectionsKeepCanonicalOrderAndClearingRows`; D `WidgetAcceptanceInstrumentedTest` | M5, M7 |
 | 40 | D `ShellTaskInstrumentedTest.eachAppHasOneRecentsTaskAndRelaunchBringsItForward` | M12 |
-| 41 | J `ShellActivityTest.pullToRefreshIsBlockedUntilLoadedAndWheneverPageCanScrollUp`, `explicitReloadPreparesFormFillButCannotRearmBasicAuthentication` | [pull-to-refresh device procedure](#pull-to-refresh-procedure-r92) |
+| 41 | J `ShellActivityTest.pullToRefreshIsBlockedUntilLoadedAndWheneverPageCanScrollUp`, `horizontalSwipeAtPageTopIsLeftToThePage`, `pullToRefreshFollowsTheRemainingFingerAndYieldsToAClaimingChild`, `explicitReloadPreparesFormFillButCannotRearmBasicAuthentication` | [pull-to-refresh device procedure](#pull-to-refresh-procedure-r92) |
 | 42 | J `ShellActivityTest.allowlistedSchemeIsDelegatedOnlyAfterConfirmationEveryTime`, `bankIdAppLinkIsDelegatedAfterConfirmation`, `dangerousAndUnknownSchemesAreBlockedAndNeverPassedToAndroid`; `NavigationPolicyTest.bankIdAppLinkNeedsAnAutostartTokenAndMainFrame`; D `ShellNavigationInstrumentedTest.blockedAndUngesturedSchemesAreNeverPassedToAndroid` | M9; verify a real BankID login on a device, including a relying party with a non-null return URL (BankID may open the default browser instead of returning to MWS) |
 | 43 | J `ShellPresentationTest.wcagReferenceValuesAndIconSelection`, `paintsManifestBackgroundBeforeWebViewAndDoesNotChangeNativeWindow` | M12 |
 | 44 | D `DiscoverySessionInstrumentedTest.metaRefreshPageIsFollowedToItsSameOriginTarget`, `scriptRedirectPageIsFollowedToItsSameOriginTarget`; J `DiscoveryAttemptTest.redirectPageBeforeSnapshotIsFollowedToTheNextSameOriginCommit`, `followingIsBoundedAndNeverLeavesCrossOriginOrFailedDocuments`, `DiscoveryDomTest.onlyHttpsRefreshTargetIsKept`; script test `scripts/tests/discovery-dom.test.cjs` | M2 |
@@ -392,11 +392,12 @@ Run on a supported provider with a configured HTTPS app containing a long page a
 1. At scroll top, drag downward and release past the refresh threshold. Verify the current page reloads and Back history is unchanged.
 2. Scroll down, then drag downward. Verify the page scrolls normally without reloading. A gesture starting below the top must not become a refresh when it reaches the top; begin a new gesture there.
 3. At the top, try an upward drag, a horizontal drag, a short downward drag, and a cancelled gesture. Verify none reloads.
-4. Complete a form-fill attempt, then refresh. Verify the reloaded document permits a fresh attempt and stale credential results cannot fill it.
-5. For an HTTP Basic-auth site, refresh and verify no new MyPass Basic-auth lookup is initiated. Cached authentication may continue to work; a new challenge is cancelled.
-6. Verify refresh is unavailable during initial loading, on an error overlay, and during Retry recovery. Rotate a loaded shell and verify pull-to-refresh still works without an automatic reload.
+4. On a page at scroll top with a horizontally scrolling element (carousel, side-scrolling app), swipe sideways with some downward drift. Verify the element scrolls as smoothly as in Chrome on the same device and the refresh indicator never appears. Repeat steps 1 and 3 on that page to confirm refresh still works where the page does not claim the gesture.
+5. Complete a form-fill attempt, then refresh. Verify the reloaded document permits a fresh attempt and stale credential results cannot fill it.
+6. For an HTTP Basic-auth site, refresh and verify no new MyPass Basic-auth lookup is initiated. Cached authentication may continue to work; a new challenge is cancelled.
+7. Verify refresh is unavailable during initial loading, on an error overlay, and during Retry recovery. Rotate a loaded shell and verify pull-to-refresh still works without an automatic reload.
 
-JVM coverage in `ShellActivityTest` verifies scroll-top gating, gesture interception, reload dispatch, form-fill preparation, and Basic-auth retirement on reload. Actual WebView scrolling and provider/network behavior require this device pass.
+JVM coverage in `ShellActivityTest` verifies scroll-top gating, gesture interception, horizontal axis locking, multi-touch pointer handoff, honouring a child's disallow-intercept request, reload dispatch, form-fill preparation, and Basic-auth retirement on reload. Actual WebView scrolling and provider/network behavior require this device pass.
 
 ## Provider qualification
 

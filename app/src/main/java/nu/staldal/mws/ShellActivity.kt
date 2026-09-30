@@ -15,6 +15,7 @@ import android.view.ContextMenu
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.ViewGroup
 import android.webkit.GeolocationPermissions
 import android.webkit.HttpAuthHandler
@@ -52,6 +53,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import java.util.UUID
+import kotlin.math.abs
 import kotlinx.coroutines.withContext
 
 /**
@@ -87,12 +89,55 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         }
         container = FrameLayout(this).apply { id = R.id.shell_container }
         refresh = object : SwipeRefreshLayout(this) {
+            private val touchSlop = ViewConfiguration.get(context).scaledTouchSlop
             private var startedAtTop = false
+            private var horizontal = false
+            private var axisDecided = false
+            private var childClaimed = false
+            private var activePointer = MotionEvent.INVALID_POINTER_ID
+            private var downX = 0f
+            private var downY = 0f
             override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
-                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
-                    startedAtTop = !canChildScrollUp()
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        startedAtTop = !canChildScrollUp()
+                        horizontal = false
+                        axisDecided = false
+                        childClaimed = false
+                        activePointer = event.getPointerId(0)
+                        downX = event.x
+                        downY = event.y
+                    }
+                    MotionEvent.ACTION_POINTER_UP -> if (event.getPointerId(event.actionIndex) == activePointer) {
+                        // Follow a remaining finger from where it is now.
+                        val next = if (event.actionIndex == 0) 1 else 0
+                        activePointer = event.getPointerId(next)
+                        downX = event.getX(next)
+                        downY = event.getY(next)
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val index = event.findPointerIndex(activePointer)
+                        if (!axisDecided && index >= 0) {
+                            // SwipeRefreshLayout only looks at vertical travel, so a sideways swipe
+                            // that drifts downward would be stolen from the page. The first axis to
+                            // pass the touch slop owns the gesture.
+                            val dx = abs(event.getX(index) - downX)
+                            val dy = abs(event.getY(index) - downY)
+                            if (dx > touchSlop || dy > touchSlop) {
+                                axisDecided = true
+                                horizontal = dx >= dy
+                            }
+                        }
+                    }
                 }
-                return startedAtTop && super.onInterceptTouchEvent(event)
+                return startedAtTop && !horizontal && !childClaimed && super.onInterceptTouchEvent(event)
+            }
+
+            // SwipeRefreshLayout 1.1.0 drops this request when its target does not nest scrolling,
+            // which the shell container does not, so honour it for the rest of the gesture.
+            override fun requestDisallowInterceptTouchEvent(disallow: Boolean) {
+                if (disallow) childClaimed = true
+                parent?.requestDisallowInterceptTouchEvent(disallow)
             }
         }.apply {
             addView(container, ViewGroup.LayoutParams(-1, -1))

@@ -293,6 +293,66 @@ class ShellActivityTest {
         assertEquals(1, view.loads)
     }
 
+    @Test fun horizontalSwipeAtPageTopIsLeftToThePage() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        val refresh = container(activity).parent as androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        val slop = android.view.ViewConfiguration.get(activity).scaledTouchSlop
+        fun intercept(action: Int, x: Float, y: Float): Boolean {
+            val event = android.view.MotionEvent.obtain(0, 10, action, x, y, 0)
+            return try { refresh.onInterceptTouchEvent(event) } finally { event.recycle() }
+        }
+        assertFalse(intercept(android.view.MotionEvent.ACTION_DOWN, 100f, 100f))
+        // Sideways with downward drift past the slop: SwipeRefreshLayout alone would take this.
+        assertFalse(intercept(android.view.MotionEvent.ACTION_MOVE, 100f + 4 * slop, 100f + 2 * slop))
+        assertFalse(intercept(android.view.MotionEvent.ACTION_MOVE, 100f + 4 * slop, 400f))
+        intercept(android.view.MotionEvent.ACTION_UP, 100f + 4 * slop, 400f)
+        // The next gesture decides its axis afresh.
+        assertFalse(intercept(android.view.MotionEvent.ACTION_DOWN, 100f, 100f))
+        assertTrue(intercept(android.view.MotionEvent.ACTION_MOVE, 100f + slop, 100f + 4 * slop))
+        intercept(android.view.MotionEvent.ACTION_CANCEL, 100f + slop, 100f + 4 * slop)
+        assertEquals(0, view.reloads)
+    }
+
+    @Test fun pullToRefreshFollowsTheRemainingFingerAndYieldsToAClaimingChild() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        Shadows.shadowOf(view).webViewClient.onPageCommitVisible(view, app.launchUrl)
+        val refresh = container(activity).parent as androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+        val slop = android.view.ViewConfiguration.get(activity).scaledTouchSlop
+        fun intercept(action: Int, vararg pointers: Pair<Int, Pair<Float, Float>>): Boolean {
+            val properties = pointers.map { (id, _) ->
+                android.view.MotionEvent.PointerProperties().apply { this.id = id }
+            }.toTypedArray()
+            val coords = pointers.map { (_, xy) ->
+                android.view.MotionEvent.PointerCoords().apply { x = xy.first; y = xy.second }
+            }.toTypedArray()
+            val event = android.view.MotionEvent.obtain(0, 10, action, pointers.size, properties, coords,
+                0, 0, 1f, 1f, 0, 0, 0, 0)
+            return try { refresh.onInterceptTouchEvent(event) } finally { event.recycle() }
+        }
+        fun pointerAction(action: Int, index: Int) =
+            action or (index shl android.view.MotionEvent.ACTION_POINTER_INDEX_SHIFT)
+        val far = 100f + 10 * slop
+        assertFalse(intercept(android.view.MotionEvent.ACTION_DOWN, 0 to (100f to 100f)))
+        assertFalse(intercept(pointerAction(android.view.MotionEvent.ACTION_POINTER_DOWN, 1),
+            0 to (100f to 100f), 1 to (far to 100f)))
+        assertFalse(intercept(pointerAction(android.view.MotionEvent.ACTION_POINTER_UP, 0),
+            0 to (100f to 100f), 1 to (far to 100f)))
+        // The second finger moves straight down from where it was, not sideways from the first.
+        assertTrue(intercept(android.view.MotionEvent.ACTION_MOVE, 1 to (far to 100f + 4 * slop)))
+        intercept(android.view.MotionEvent.ACTION_CANCEL, 1 to (far to 100f + 4 * slop))
+
+        assertFalse(intercept(android.view.MotionEvent.ACTION_DOWN, 0 to (100f to 100f)))
+        refresh.requestDisallowInterceptTouchEvent(true)
+        assertFalse(intercept(android.view.MotionEvent.ACTION_MOVE, 0 to (100f to 100f + 4 * slop)))
+        intercept(android.view.MotionEvent.ACTION_UP, 0 to (100f to 100f + 4 * slop))
+        assertEquals(0, view.reloads)
+    }
+
     @Test fun refreshCannotReplaceAnAcceptedNavigationOrRepeatAnInFlightReload() {
         val app = addApp()
         val activity = launch(ShellActivity.intent(context, app.id))

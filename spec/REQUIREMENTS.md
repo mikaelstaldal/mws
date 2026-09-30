@@ -228,7 +228,7 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 
 - System Back first dismisses a local error screen, returning to the last safe page when one remains. Otherwise it goes back in WebView history if there is a previous entry. Otherwise it closes the shell.
 - Gesture Back and hardware/software Back behave identically.
-- Pull-to-refresh: a downward drag starting while the page is at scroll top reloads the page. It is inactive when the page is not at the top. It is the only reload control on a loaded page, and it counts as an explicit reload (it allows a new form-fill attempt).
+- Pull-to-refresh: a downward drag starting while the page is at scroll top reloads the page. It is inactive when the page is not at the top, and a gesture that starts sideways stays with the page even if it drifts downward, so horizontal scrolling in the page is not interrupted. It is the only reload control on a loaded page, and it counts as an explicit reload (it allows a new form-fill attempt).
 
 ### 9.3 Navigation policy
 
@@ -429,7 +429,7 @@ Test traceability and end-to-end device procedures: [ACCEPTANCE.md](ACCEPTANCE.m
 38. After restore, records are `ACTIVE` with fresh web data and default icons, and authentication depends only on MyPass availability at use time.
 39. A `CLEARING` app is a disabled row at its usual position in the main list and multi-app widgets. A removed app disappears immediately.
 40. Each running shell has its own Recents entry, and relaunching a live app brings that shell forward.
-41. Pull-to-refresh at page top reloads and permits a new form-fill attempt, and it is inactive when scrolled.
+41. Pull-to-refresh at page top reloads and permits a new form-fill attempt, and it is inactive when scrolled and for a gesture that starts sideways.
 42. `mailto:`, `tel:`, `sms:`, `geo:`, `market:`, `bankid:` and BankID's HTTPS autostart app link are delegated only after confirmation, and `intent:` is blocked. BankID autostart works for main-frame redirects and script navigation.
 43. `theme_color` tints the system bars and task description with legible icon contrast, and `background_color` paints before first paint; neither affects native screens.
 44. Discovery of a site whose start page is a same-origin redirect page (immediate meta refresh or script redirect) proposes the title and icon of the page it redirects to.
