@@ -429,6 +429,76 @@ class ShellActivityTest {
         assertEquals(1, backend.bound.size)
     }
 
+    @Test fun externalLinkOpensMatchedTaskAndReusesItsWebView() {
+        val source = addApp()
+        val target = addApp().let {
+            it.copy(configuredUrl = "https://other.example/", launchUrl = "https://other.example/start",
+                scope = "https://other.example/")
+        }
+        assertEquals(ConfigurationWriteResult.Success, onMain { repository.update(target) })
+        val sourceActivity = launch(ShellActivity.intent(context, source.id))
+        val targetController = controller(ShellActivity.intent(context, target.id))
+        val targetView = awaitWebView(targetController.get())
+        val link = "https://other.example/page?foo=1"
+
+        sourceActivity.openExternalLink(link)
+        await { Shadows.shadowOf(sourceActivity).peekNextStartedActivity() != null }
+        val routed = Shadows.shadowOf(sourceActivity).nextStartedActivity
+        assertEquals("mws-app:${target.id}", routed.dataString)
+        assertFalse(routed.toUri(0).contains(link))
+        targetController.newIntent(routed)
+        assertEquals(link, targetView.url)
+        assertEquals(2, targetView.loads)
+        assertSame(targetView, awaitWebView(targetController.get()))
+        assertEquals(2, backend.bound.size)
+    }
+
+    @Test fun externalLinkInitialLaunchAndExpiredToken() {
+        val target = addApp()
+        val link = "https://example.com/deep"
+        val intent = ShellActivity.linkIntent(context, target.id, link)
+        val first = launch(intent)
+        assertEquals(link, awaitWebView(first).url)
+        // Reusing an already consumed token (or restoring after process death) loads the saved URL.
+        val second = launch(intent)
+        assertEquals(target.launchUrl, awaitWebView(second).url)
+    }
+
+    @Test fun externalLinkOutsideTargetScopeFallsBackToBrowser() {
+        val target = addApp()
+        installBrowser("org.example.browser")
+        val activity = launch(ShellActivity.linkIntent(context, target.id, "https://other.example/page"))
+        assertEquals(target.launchUrl, awaitWebView(activity).url)
+        val fallback = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(Intent.ACTION_VIEW, fallback.action)
+        assertEquals("https://other.example/page", fallback.dataString)
+    }
+
+    @Test fun externalLinkTokenCannotBeUsedForAnotherApp() {
+        val original = addApp()
+        val other = addApp()
+        val intent = ShellActivity.linkIntent(context, original.id, "https://example.com/deep")
+            .setData(Uri.parse("mws-app:${other.id}"))
+        val activity = launch(intent)
+        assertEquals(other.launchUrl, awaitWebView(activity).url)
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
+    @Test fun externalLinkWithSensitiveParameterNeedsConsentBeforeCreatingTask() {
+        val source = addApp()
+        val target = addApp().copy(configuredUrl = "https://other.example/",
+            launchUrl = "https://other.example/start", scope = "https://other.example/")
+        assertEquals(ConfigurationWriteResult.Success, onMain { repository.update(target) })
+        val activity = launch(ShellActivity.intent(context, source.id))
+        awaitWebView(activity)
+        activity.openExternalLink("https://other.example/page?token=secret")
+        await { org.robolectric.shadows.ShadowDialog.getLatestDialog() is androidx.appcompat.app.AlertDialog }
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        permissionDialog().getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick()
+        settle()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+    }
+
     @Suppress("DEPRECATION") // ShadowWebView.setCanGoBack
     @Test fun backNavigatesHistoryThenClosesTheShell() {
         val app = addApp()
@@ -643,6 +713,24 @@ class ShellActivityTest {
         assertNull("recovery closed: ${holder.closed}", holder.closed)
         val second = awaitWebView(activity)
         assertEquals(committed, Shadows.shadowOf(second).lastLoadedUrl)
+        assertEquals(listOf(ProfileNames.app(app.id, 0), ProfileNames.app(app.id, 0)), backend.bound)
+    }
+
+    @Suppress("DEPRECATION") // RenderProcessGoneDetail() is only meant for the platform
+    @Test fun externalLinkDuringRendererCrashLoadsInRecoveredProfile() {
+        val app = addApp()
+        val controller = controller(ShellActivity.intent(context, app.id))
+        val first = awaitWebView(controller.get())
+        Shadows.shadowOf(first).webViewClient.onRenderProcessGone(first,
+            object : RenderProcessGoneDetail() {
+                override fun didCrash() = true
+                override fun rendererPriorityAtExit() = 0
+            })
+        val destination = "https://example.com/deep"
+        controller.newIntent(ShellActivity.linkIntent(context, app.id, destination))
+        await { backend.views.size == 2 }
+        val second = awaitWebView(controller.get())
+        assertEquals(destination, Shadows.shadowOf(second).lastLoadedUrl)
         assertEquals(listOf(ProfileNames.app(app.id, 0), ProfileNames.app(app.id, 0)), backend.bound)
     }
 

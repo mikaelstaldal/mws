@@ -238,7 +238,7 @@ Timers pause while a MyPass request started by that attempt is outstanding.
 - **New windows** (`target="_blank"` or a gestured `window.open()`; the two cannot be told apart):
   - The destination is determined before anything is sent.
   - An in-scope HTTPS destination loads in the existing shell.
-  - An out-of-scope allowed HTTPS destination opens in the system default browser.
+  - An out-of-scope allowed HTTPS destination within another configured app's scope opens in that app's shell, using its active instance when one exists. Otherwise it opens in the system default browser.
   - A non-GET request, an undeterminable destination, or `about:blank` is rejected with a non-fatal message. A blank window is rejected even when its opener navigates it afterwards, and a window that has been rejected can never be routed later.
   - Routing a new window sends no request byte, commits no document for the destination, and leaves no web data in the app's profile.
   - The one exception is the opener's own origin. `window.open()` gives the opener access to the new window's initial blank document before Android reports the window, and that document has the opener's origin. The opener can therefore write its own origin's cookies and storage through it. This needs no authority beyond what the opener already has, and it cannot reach any other origin's data.
@@ -410,7 +410,7 @@ Test traceability and end-to-end device procedures: [ACCEPTANCE.md](ACCEPTANCE.m
 19. Discovery leaves no web data in the configured app's runtime data.
 20. Removing or clearing one app deletes its web data without affecting any other app. Removal while the WebView is incompatible deletes native data immediately and completes web-data deletion when compatibility returns.
 21. On a WebView lacking the isolation capability, the app reports incompatibility and never launches with shared data.
-22. An in-scope `target="_blank"` link opens in the shell, and an out-of-scope one opens in the system browser without transferring credentials or data. An ungestured `window.open()` opens nothing. Long-press **Open in browser** is offered only for allowed HTTPS URLs.
+22. An in-scope `target="_blank"` link opens in the shell, and an out-of-scope one without a matching configured app opens in the system browser without transferring credentials or data. An ungestured `window.open()` opens nothing. Long-press **Open in browser** is offered only for allowed HTTPS URLs.
 23. Without a MyPass form credential, the page remains usable for manual login.
 24. Without a MyPass Basic credential, the challenge is cancelled and the failure reported, and other apps are unaffected.
 25. No credential ever goes to the clipboard, and MyPass is never queried for an insecure page, TLS-error page or subframe.
@@ -434,3 +434,4 @@ Test traceability and end-to-end device procedures: [ACCEPTANCE.md](ACCEPTANCE.m
 43. `theme_color` tints the system bars and task description with legible icon contrast, and `background_color` paints before first paint; neither affects native screens.
 44. Discovery of a site whose start page is a same-origin redirect page (immediate meta refresh or script redirect) proposes the title and icon of the page it redirects to.
 45. A valid HTTPS URL entered on the main screen opens immediately in an unsaved shell with an isolated disposable profile. It runs no discovery, creates no configured app, and never requests automatic authentication. Closing the shell retires its profile.
+46. An out-of-scope new-window link matching another configured app opens the destination in that app's shell and reuses its active WebView and profile when available; unmatched links still open in the system browser.

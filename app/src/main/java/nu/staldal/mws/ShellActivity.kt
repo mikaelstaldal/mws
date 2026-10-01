@@ -166,6 +166,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         // process death a fresh holder loads the resolved launch URL (A§9.2).
         holder = ViewModelProvider(this, ShellHolder.Factory(services, appId, applicationContext, adHocUrl))
             .get(ShellHolder::class.java)
+        consumeLink(intent, appId)
         holder?.attach(this)
         renderOverlay()
     }
@@ -173,6 +174,17 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     override fun onResume() {
         super.onResume()
         holder?.record?.let(::onRecord)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        val appId = appIdOf(intent)
+        val url = takeLink(intent, appId)
+        if (appId == holder?.appId && url != null) holder?.openExternalDestination(url)
+    }
+
+    private fun consumeLink(intent: Intent, appId: String) {
+        takeLink(intent, appId)?.let { holder?.openExternalDestination(it) }
     }
 
     override fun onDestroy() {
@@ -209,7 +221,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
             release = { ShellServices.shared(application).profiles.release(it) },
             scope = { holder?.record?.scope },
             route = { url, inside ->
-                if (inside) holder?.openWindowDestination(webView, url) else handoff.openInBrowser(url)
+                if (inside) holder?.openWindowDestination(webView, url) else openExternalLink(url)
             },
             reject = { handoff.notice(it) },
         )
@@ -227,6 +239,24 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
     override fun onNotice(message: Int) = handoff.notice(message)
 
     override fun onExternal(decision: NavigationDecision.Confirm) = handoff.confirmExternal(decision)
+
+    internal fun openExternalLink(url: String) {
+        val sourceId = holder?.appId ?: return
+        lifecycleScope.launch {
+            val target = try {
+                ExternalLinkTarget.find(UrlPolicy.parseNavigation(url) ?: return@launch, sourceId,
+                    ShellServices.shared(this@ShellActivity).repository.ordered())
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                null
+            }
+            if (!isDestroyed && !closing) {
+                if (target == null) handoff.openInBrowser(url)
+                else handoff.openInApp(url, target.id)
+            }
+        }
+    }
 
     override fun onCreateContextMenu(menu: ContextMenu, view: View, menuInfo: ContextMenu.ContextMenuInfo?) {
         super.onCreateContextMenu(menu, view, menuInfo)
@@ -324,6 +354,8 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
         const val ACTION_OPEN = "nu.staldal.mws.action.OPEN_APP"
         private const val ACTION_OPEN_AD_HOC = "nu.staldal.mws.action.OPEN_URL"
         private val adHocLaunches = mutableMapOf<String, String>()
+        private val linkLaunches = mutableMapOf<String, Pair<String, String>>()
+        private const val EXTRA_LINK_TOKEN = "nu.staldal.mws.extra.LINK_TOKEN"
 
         /** The only way to open a shell: the data URI identifies the app and its document task. */
         fun intent(context: Context, appId: String): Intent {
@@ -332,6 +364,27 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
                 .setAction(ACTION_OPEN)
                 .setData(Uri.parse("$SCHEME:$appId"))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_DOCUMENT)
+        }
+
+        /** The intent carries an opaque one-use token, never a possibly sensitive destination. */
+        internal fun linkIntent(context: Context, appId: String, url: String): Intent {
+            require(UrlPolicy.parseNavigation(url)?.serialized == url)
+            val token = UUID.randomUUID().toString()
+            linkLaunches[token] = appId to url
+            // A launch abandoned by Android must not retain a possibly sensitive URL forever.
+            Handler(Looper.getMainLooper()).postDelayed({ linkLaunches.remove(token) }, 120_000)
+            return intent(context, appId).putExtra(EXTRA_LINK_TOKEN, token)
+        }
+
+        internal fun discardLink(intent: Intent) {
+            intent.getStringExtra(EXTRA_LINK_TOKEN)?.let(linkLaunches::remove)
+        }
+
+        private fun takeLink(intent: Intent, appId: String?): String? {
+            val token = intent.getStringExtra(EXTRA_LINK_TOKEN) ?: return null
+            intent.removeExtra(EXTRA_LINK_TOKEN)
+            val link = linkLaunches.remove(token) ?: return null
+            return link.second.takeIf { link.first == appId }
         }
 
         fun adHocIntent(context: Context, url: String): Intent {
@@ -407,6 +460,7 @@ class ShellHolder(
     private var appliedThirdPartyCookies: Boolean? = null
     /** Set once the launch URL is loading; record changes are applied from then on. */
     private var ready = false
+    private var pendingExternalDestination: String? = null
     private val timerHandler = Handler(Looper.getMainLooper())
     private var timer: Runnable? = null
     private var timerDeadline = 0L
@@ -567,7 +621,11 @@ class ShellHolder(
         if (adHocUrl == null) installFormFill(webView)
         installClient(webView)
         host?.onReady(webView)
-        load(webView, app.launchUrl, initial = true)
+        val requested = pendingExternalDestination
+        val initialUrl = requested?.takeIf { isExternalDestinationAllowed(it, app) } ?: app.launchUrl
+        pendingExternalDestination = null
+        load(webView, initialUrl, initial = true)
+        if (requested != null && requested != initialUrl) (host as? ShellActivity)?.handoff?.openInBrowser(requested)
     }
 
     private fun installFormFill(webView: WebView) {
@@ -687,6 +745,31 @@ class ShellHolder(
     internal fun openWindowDestination(webView: WebView, url: String) {
         if (closed != null || bound?.webView !== webView || UrlPolicy.parseNavigation(url) == null) return
         load(webView, url, initial = false)
+    }
+
+    /** A document-task relaunch loads the link in its existing profile and WebView. */
+    internal fun openExternalDestination(url: String) {
+        if (closed != null || adHocUrl != null) {
+            (host as? ShellActivity)?.handoff?.openInBrowser(url)
+            return
+        }
+        val app = record
+        val webView = bound?.webView
+        if (!ready || app == null || webView == null || rendererGone || recovering) {
+            pendingExternalDestination = url
+            if (rendererGone && !recovering) retry()
+        } else if (isExternalDestinationAllowed(url, app)) {
+            load(webView, url, initial = false)
+        } else {
+            (host as? ShellActivity)?.handoff?.openInBrowser(url)
+        }
+    }
+
+    private fun isExternalDestinationAllowed(url: String, app: ConfiguredApp): Boolean {
+        if (app.profileState != ProfileState.ACTIVE) return false
+        val target = UrlPolicy.parseNavigation(url) ?: return false
+        val scope = UrlPolicy.parseHttps(app.scope) ?: return false
+        return UrlPolicy.isWithinScope(target, scope)
     }
 
     /** Explicit user reload: keep WebView reload semantics, including its current history entry. */
@@ -908,7 +991,13 @@ class ShellHolder(
                     if (adHocUrl == null) installFormFill(replacement.webView)
                     installClient(replacement.webView)
                     host?.onReady(replacement.webView)
-                    load(replacement.webView, target, initial = true)
+                    val requested = pendingExternalDestination
+                    val destination = requested?.takeIf { isExternalDestinationAllowed(it, record!!) }
+                        ?: target
+                    pendingExternalDestination = null
+                    load(replacement.webView, destination, initial = true)
+                    if (requested != null && requested != destination)
+                        (host as? ShellActivity)?.handoff?.openInBrowser(requested)
                 } catch (e: CancellationException) {
                     throw e
                 } catch (_: Exception) {

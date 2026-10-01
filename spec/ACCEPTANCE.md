@@ -100,6 +100,7 @@ class covers several behaviors.
 | 43 | J `ShellPresentationTest.wcagReferenceValuesAndIconSelection`, `paintsManifestBackgroundBeforeWebViewAndDoesNotChangeNativeWindow` | M12 |
 | 44 | D `DiscoverySessionInstrumentedTest.metaRefreshPageIsFollowedToItsSameOriginTarget`, `scriptRedirectPageIsFollowedToItsSameOriginTarget`; J `DiscoveryAttemptTest.redirectPageBeforeSnapshotIsFollowedToTheNextSameOriginCommit`, `followingIsBoundedAndNeverLeavesCrossOriginOrFailedDocuments`, `DiscoveryDomTest.onlyHttpsRefreshTargetIsKept`; script test `scripts/tests/discovery-dom.test.cjs` | M2 |
 | 45 | J `MainScreenTest.quickLaunchValidatesAndOpensWithoutAddingAnApp`, `ShellActivityTest.adHocLaunchUsesDisposableProfileAndLeavesNoConfiguration`, `adHocIntentRejectsInvalidUrls`, `adHocLaunchNeverRequestsMyPass` | M1, M7 |
+| 46 | J `ExternalLinkTargetTest`, `ShellActivityTest.externalLinkOpensMatchedTaskAndReusesItsWebView`, `externalLinkInitialLaunchAndExpiredToken`, `externalLinkOutsideTargetScopeFallsBackToBrowser`, `externalLinkTokenCannotBeUsedForAnotherApp`, `externalLinkWithSensitiveParameterNeedsConsentBeforeCreatingTask`, `externalLinkDuringRendererCrashLoadsInRecoveredProfile`; D manual device check | M9 |
 
 ## Manual device procedures
 
@@ -240,10 +241,10 @@ or failing the isolation probe, attempt to launch a configured app. Expect an
 incompatibility explanation and no bound shared WebView. Do not use this device
 for the other acceptance checks; record provider identity and failed probe.
 
-### M9 — navigation and delegation (22, 26–27, 37, 42)
+### M9 — navigation and delegation (22, 26–27, 37, 42, 46)
 
 From a controlled HTTPS page, tap in-scope and out-of-scope `target="_blank"`
-links. The former opens in the shell; the latter opens in the browser with no
+links. The former opens in the shell; an unmatched latter opens in the browser with no
 MyPass credential or app data in its intent. Run an ungestured `window.open()`:
 no window opens. Long-press an allowed HTTPS link and check **Open in browser**;
 it must be absent for HTTP or blocked schemes. Follow an ordinary out-of-scope
@@ -253,6 +254,11 @@ downloads: each reports unsupported with no external app launch. Try `mailto:`,
 delegation. Cancel each once. `intent:` must be blocked, including fallback URLs.
 Use an intent interceptor or activity log to check no extra data or credentials
 leave MWS. Controlled server logs must show no HTTP request bytes.
+Configure a second app with a scope matching an out-of-scope new-window link.
+Open it while its shell is already running, then from a fresh task. Both should
+load the link in the second app's profile; the first should retain its live
+WebView and authentication. A link outside every configured scope still uses the
+browser. Long-press **Open in browser** on a matching link still uses the browser.
 
 ### M10 — order (28–29)
 

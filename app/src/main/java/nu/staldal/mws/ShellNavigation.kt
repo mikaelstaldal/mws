@@ -177,10 +177,25 @@ class ShellHandoff(private val context: Context) {
                 else R.string.shell_url_rejected)
             return
         }
+        withConsent(allowed) { startBrowser(allowed) }
+    }
+
+    /** A matched new-window link enters the target app's document task after fresh URL consent. */
+    fun openInApp(url: String, appId: String) {
+        if (closed || dialog != null) return
+        val allowed = UrlPolicy.parseNavigation(url)?.serialized ?: return
         withConsent(allowed) {
-            val intent = browserIntent(context.packageManager, allowed)
-            if (intent == null) notice(R.string.shell_no_browser) else start(intent, R.string.shell_no_browser)
+            val intent = ShellActivity.linkIntent(context, appId, allowed)
+            if (!start(intent, null)) {
+                ShellActivity.discardLink(intent)
+                startBrowser(allowed)
+            }
         }
+    }
+
+    private fun startBrowser(url: String) {
+        val intent = browserIntent(context.packageManager, url)
+        if (intent == null) notice(R.string.shell_no_browser) else start(intent, R.string.shell_no_browser)
     }
 
     fun close() {
@@ -203,14 +218,16 @@ class ShellHandoff(private val context: Context) {
         dialog = shown
     }
 
-    private fun start(intent: Intent, @StringRes missing: Int) {
+    private fun start(intent: Intent, @StringRes missing: Int?): Boolean {
         try {
             context.startActivity(intent)
+            return true
         } catch (_: ActivityNotFoundException) {
-            notice(missing)
+            missing?.let(::notice)
         } catch (_: SecurityException) {
-            notice(missing)
+            missing?.let(::notice)
         }
+        return false
     }
 
     companion object {
