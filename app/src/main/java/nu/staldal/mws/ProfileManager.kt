@@ -120,16 +120,26 @@ fun interface LiveShellCloser {
 /** Shells register while live, so profile retirement can close them first (A§9.1). */
 class LiveShellRegistry : LiveShellCloser {
     private val closers = mutableMapOf<String, MutableList<suspend () -> Unit>>()
+    private val currentUrls = mutableMapOf<String, () -> String?>()
 
     /** Returns an unregister action. Main thread only. */
-    fun register(appId: String, close: suspend () -> Unit): () -> Unit {
+    fun register(appId: String, currentUrl: (() -> String?)? = null,
+                 close: suspend () -> Unit): () -> Unit {
         closers.getOrPut(appId) { mutableListOf() } += close
-        return { closers[appId]?.remove(close) }
+        if (currentUrl != null) currentUrls[appId] = currentUrl
+        return {
+            closers[appId]?.remove(close)
+            if (currentUrl != null && currentUrls[appId] === currentUrl) currentUrls.remove(appId)
+        }
     }
+
+    /** A live, committed page URL only; never persisted or retained after the shell closes. */
+    fun currentUrl(appId: String): String? = currentUrls[appId]?.invoke()
 
     /** Every closer runs; failed ones stay registered for Retry, and the first failure is rethrown. */
     override suspend fun closeAll(appId: String) {
         val pending = closers.remove(appId)?.toList() ?: return
+        currentUrls.remove(appId)
         var failure: Exception? = null
         for (close in pending) {
             try {

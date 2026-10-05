@@ -93,6 +93,32 @@ class ShellActivityTest {
             retained.canvasColor)
     }
 
+    @Suppress("DEPRECATION") // ShadowWebView.setCanGoBack
+    @Test fun currentUrlRequiresCommittedIdlePageAndBackMarksNavigationPending() {
+        val app = addApp()
+        val activity = launch(ShellActivity.intent(context, app.id))
+        val view = awaitWebView(activity)
+        val client = Shadows.shadowOf(view).webViewClient
+        assertNull(services.shells.currentUrl(app.id))
+        client.onPageCommitVisible(view, app.launchUrl)
+        assertEquals(app.launchUrl, services.shells.currentUrl(app.id))
+        // Model the WebView URL changes made by same-document navigation, without a new commit.
+        view.loadUrl("https://example.com/next")
+        assertEquals("https://example.com/next", services.shells.currentUrl(app.id))
+        view.loadUrl("https://other.example/")
+        assertNull(services.shells.currentUrl(app.id))
+        view.loadUrl(app.launchUrl)
+        Shadows.shadowOf(view).setCanGoBack(true)
+        val holder = ReflectionHelpers.getField<ShellHolder>(activity, "holder")
+        holder.goBack()
+        assertNull(services.shells.currentUrl(app.id))
+        client.onPageStarted(view, app.launchUrl, null)
+        client.onPageCommitVisible(view, app.launchUrl)
+        assertEquals(app.launchUrl, services.shells.currentUrl(app.id))
+        client.onReceivedError(view, request(app.launchUrl, "GET"), null)
+        assertNull(services.shells.currentUrl(app.id))
+    }
+
     @Test fun launchIntentCarriesOnlyTheAppIdAsDocumentDataUri() {
         val intent = ShellActivity.intent(context, "app_1-A")
         assertEquals(ShellActivity::class.java.name, intent.component?.className)

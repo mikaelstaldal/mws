@@ -41,6 +41,7 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var urlField: TextInputEditText
     private lateinit var nameLayout: TextInputLayout
     private lateinit var nameField: TextInputEditText
+    private lateinit var useCurrentUrlButton: MaterialButton
     private lateinit var thirdPartyCookies: SwitchMaterial
     private lateinit var clearingNotice: TextView
     private lateinit var loadError: TextView
@@ -227,6 +228,7 @@ class EditorActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         myPassStatus.refresh(myPassClient)
+        updateCurrentUrlButton()
     }
 
     override fun onDestroy() {
@@ -289,6 +291,23 @@ class EditorActivity : AppCompatActivity() {
         }
         urlField.minHeight = kotlin.math.ceil(48 * density).toInt()
         column.addView(urlLayout)
+        useCurrentUrlButton = MaterialButton(this).apply {
+            id = R.id.editor_use_current_url
+            setText(R.string.editor_use_current_url)
+            visibility = View.GONE
+            setOnClickListener {
+                val id = appId ?: return@setOnClickListener
+                val current = ShellServices.shared(this@EditorActivity).shells.currentUrl(id)
+                if (current == null) {
+                    updateCurrentUrlButton()
+                    return@setOnClickListener
+                }
+                urlField.setText(current)
+                urlField.setSelection(urlField.length())
+                updateCurrentUrlButton()
+            }
+        }
+        column.addView(useCurrentUrlButton)
         nameField = TextInputEditText(this).apply {
             id = R.id.editor_name
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
@@ -479,6 +498,7 @@ class EditorActivity : AppCompatActivity() {
                 }
                 saved = app
                 if (!loaded) populate(app)
+                updateCurrentUrlButton()
                 clearingNotice.visibility =
                     if (app.profileState == ProfileState.CLEARING) View.VISIBLE else View.GONE
                 updateMaintenanceButtons()
@@ -497,6 +517,14 @@ class EditorActivity : AppCompatActivity() {
         retryButton.isEnabled = !saving && !maintaining && !removing
         saveButton.isEnabled = loaded && !saving && !maintaining && !removing &&
             (!pendingOriginChange || saved?.profileState == ProfileState.CLEARING)
+        updateCurrentUrlButton()
+    }
+
+    private fun updateCurrentUrlButton() {
+        if (!::useCurrentUrlButton.isInitialized) return
+        val current = appId?.let { ShellServices.shared(this).shells.currentUrl(it) }
+        useCurrentUrlButton.visibility = if (loaded && current != null) View.VISIBLE else View.GONE
+        useCurrentUrlButton.isEnabled = !saving && !removing && !maintaining
     }
 
     private fun renderMaintenance(state: EditorMaintenanceState) {

@@ -97,6 +97,7 @@
     <string name="editor_load_failed">Could not load saved apps. Restart the app to retry.</string>
     <string name="editor_url">URL</string>
     <string name="editor_url_helper">Secure (HTTPS) address, for example example.com</string>
+    <string name="editor_use_current_url">Use current page URL</string>
     <string name="quick_launch">Open URL without saving</string>
     <string name="editor_url_required">Enter the address of the web app.</string>
     <string name="editor_https_required">HTTPS required. Insecure (HTTP) addresses cannot be saved.</string>

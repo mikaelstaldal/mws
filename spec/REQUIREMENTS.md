@@ -92,6 +92,7 @@ It is not a general-purpose browser. It is a user-configured container for trust
 
 ### 6.2 Changing the URL of an existing app
 
+- When its shell has a committed HTTPS page, the editor offers **Use current page URL**. This copies the current page URL, including same-document URL changes, into the draft; the user reviews and saves it through the normal URL edit flow. No visited URL is persisted by this action alone. The action is unavailable while a page is loading or the shell has failed or closed.
 - If the new URL's origin differs from the saved URL's origin, Save asks for confirmation. The confirmation explains that the app will be signed out of the previous site and its site data removed. On confirmation, the app's web data is discarded (as for Clear, §6.3) and the next launch starts from the new URL with empty web data.
 - The new URL and metadata are authoritative from Save onward and never roll back, even after a crash.
 - Derived metadata from the old URL is invalidated when the draft URL changes. If discovery of the new URL reached a visible commit, its results (or per-stage fallbacks) are saved. Otherwise the configured URL supplies launch URL and scope, and the bundled default icon is used until discovery succeeds.
@@ -435,3 +436,4 @@ Test traceability and end-to-end device procedures: [ACCEPTANCE.md](ACCEPTANCE.m
 44. Discovery of a site whose start page is a same-origin redirect page (immediate meta refresh or script redirect) proposes the title and icon of the page it redirects to.
 45. A valid HTTPS URL entered on the main screen opens immediately in an unsaved shell with an isolated disposable profile. It runs no discovery, creates no configured app, and never requests automatic authentication. Closing the shell retires its profile.
 46. An out-of-scope new-window link matching another configured app opens the destination in that app's shell and reuses its active WebView and profile when available; unmatched links still open in the system browser.
+47. The editor can copy a live saved shell's current HTTPS page URL into the draft, including a same-document URL change. The stored URL changes only after Save; a loading, failed or closed shell offers no current URL.

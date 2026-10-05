@@ -26,6 +26,7 @@
     <item name="editor_clearing_notice" type="id" />
     <item name="editor_url" type="id" />
     <item name="editor_url_layout" type="id" />
+    <item name="editor_use_current_url" type="id" />
     <item name="editor_name" type="id" />
     <item name="editor_name_layout" type="id" />
     <item name="editor_mypass_status" type="id" />

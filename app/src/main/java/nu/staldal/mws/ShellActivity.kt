@@ -158,7 +158,7 @@ class ShellActivity : AppCompatActivity(), ShellHolder.Host {
             override fun handleOnBackPressed() {
                 if (holder?.dismissError() == true) return
                 val webView = holder?.bound?.webView
-                if (webView != null && webView.canGoBack()) webView.goBack() else finishAndRemoveTask()
+                if (webView != null && webView.canGoBack()) holder?.goBack() else finishAndRemoveTask()
             }
         })
         val services = ShellServices.shared(this)
@@ -554,7 +554,8 @@ class ShellHolder(
                 services.awaitStartup()
                 if (adHocUrl == null) {
                     // Registered before attaching, so a concurrent Clear or Remove always reaches it.
-                    unregister = services.shells.register(appId) { close(CloseReason.RETIRED) }
+                    unregister = services.shells.register(appId,
+                        close = { close(CloseReason.RETIRED) }, currentUrl = ::editableCurrentUrl)
                     services.profiles.createAppWebView(context, appId)
                 } else {
                     val profile = withContext(kotlinx.coroutines.NonCancellable) {
@@ -661,6 +662,24 @@ class ShellHolder(
 
     private fun isCurrent(app: ConfiguredApp): Boolean = app.profileState == ProfileState.ACTIVE &&
         bound?.profileName == ProfileNames.app(app.id, app.profileGeneration)
+
+    private fun editableCurrentUrl(): String? {
+        if (closed != null || rendererGone || recovering || loading || navigationInFlight ||
+            error != null || record?.profileState != ProfileState.ACTIVE) return null
+        val committed = lastCommittedUrl?.let(UrlPolicy::parseHttps) ?: return null
+        val current = bound?.webView?.url?.let(UrlPolicy::parseHttps) ?: return null
+        // History API and fragment navigations can change the URL without another document commit.
+        if (!UrlPolicy.sameOrigin(committed, current)) return null
+        return current.serialized
+    }
+
+    fun goBack() {
+        val webView = bound?.webView ?: return
+        if (closed != null || !webView.canGoBack()) return
+        navigationInFlight = true
+        basicAuth.disarm()
+        webView.goBack()
+    }
 
     /** A§5.1: applies to later requests of the live page, without a reload. */
     private fun applyThirdPartyCookies(allow: Boolean) {
@@ -930,8 +949,7 @@ class ShellHolder(
         bound?.webView?.let { webView ->
             if (webView.url != null && webView.url != lastSafeGet) {
                 if (webView.canGoBack()) {
-                    basicAuth.disarm()
-                    webView.goBack()
+                    goBack()
                 } else {
                     basicAuth.arm(lastSafeGet!!)
                     webView.loadUrl(lastSafeGet!!)

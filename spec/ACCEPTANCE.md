@@ -1,6 +1,6 @@
 # End-to-end acceptance (R§17)
 
-This is the traceability and execution procedure for all 43 criteria in
+This is the traceability and execution procedure for all 47 criteria in
 [REQUIREMENTS.md](REQUIREMENTS.md). A test named below supplies repeatable partial
 or complete evidence; the device checks cover behavior that a unit test or an
 isolated component test cannot observe. Record **pass, fail, or not run** for each
@@ -19,7 +19,7 @@ put actual credentials or sensitive URL values in the log or screenshots.
 Install both widget types before the unfiltered instrumentation run; its widget
 and accessibility tests require actual widget instances.
 Store the result log and raw reports in a dated `acceptance-evidence-YYYYMMDD/`
-directory committed with the tested source revision. Begin with all 43 rows
+directory committed with the tested source revision. Begin with all 47 rows
 marked **not run**; change each row only when its automated and manual evidence
 has been collected. For a bug fix or feature, run at least the rows and
 procedures for the affected criteria.
@@ -101,6 +101,7 @@ class covers several behaviors.
 | 44 | D `DiscoverySessionInstrumentedTest.metaRefreshPageIsFollowedToItsSameOriginTarget`, `scriptRedirectPageIsFollowedToItsSameOriginTarget`; J `DiscoveryAttemptTest.redirectPageBeforeSnapshotIsFollowedToTheNextSameOriginCommit`, `followingIsBoundedAndNeverLeavesCrossOriginOrFailedDocuments`, `DiscoveryDomTest.onlyHttpsRefreshTargetIsKept`; script test `scripts/tests/discovery-dom.test.cjs` | M2 |
 | 45 | J `MainScreenTest.quickLaunchValidatesAndOpensWithoutAddingAnApp`, `ShellActivityTest.adHocLaunchUsesDisposableProfileAndLeavesNoConfiguration`, `adHocIntentRejectsInvalidUrls`, `adHocLaunchNeverRequestsMyPass` | M1, M7 |
 | 46 | J `ExternalLinkTargetTest`, `ShellActivityTest.externalLinkOpensMatchedTaskAndReusesItsWebView`, `externalLinkInitialLaunchAndExpiredToken`, `externalLinkOutsideTargetScopeFallsBackToBrowser`, `externalLinkTokenCannotBeUsedForAnotherApp`, `externalLinkWithSensitiveParameterNeedsConsentBeforeCreatingTask`, `externalLinkDuringRendererCrashLoadsInRecoveredProfile`; D manual device check | M9 |
+| 47 | J `EditorActivityTest.currentPageUrlIsCopiedIntoDraftAndSavedOnlyOnSave`, `currentPageUrlActionRequiresLiveCommittedPage`, `currentPageUrlActionHidesWhenLivePageBecomesUnavailable`; `ShellActivityTest.currentUrlRequiresCommittedIdlePageAndBackMarksNavigationPending`; `LiveShellRegistryTest` | M1 |
 
 ## Manual device procedures
 
@@ -109,7 +110,7 @@ only disposable sites and accounts. If a step cannot be run, mark its criteria
 **not run** and state why. Controlled fixture tests can supply the server log,
 but they do not replace the real launcher, Recents, MyPass and backup observations.
 
-### M1 — basic app flow (1–4, 34, 45)
+### M1 — basic app flow (1–4, 34, 45, 47)
 
 Add `example.com` with a name; confirm the stored URL is HTTPS. Try
 `http://localhost:8080` and another HTTP URL; both must fail inline validation.
@@ -121,6 +122,11 @@ remove it. Confirm the row disappears.
 Enter `example.com/path` in the main-screen URL field and open it without saving.
 Confirm the shell loads HTTPS directly, Back works, no entry appears in the list,
 and MyPass is never queried. HTTP input must show an error without opening a shell.
+While a saved shell remains live, navigate to another HTTPS page and return to the
+main screen. Long-press its row and choose **Use current page URL** in the editor.
+Check that Cancel preserves the old URL, then repeat and Save to store the new one.
+Repeat after a same-document History API URL change. The action must be absent
+before a first page commit and after the shell closes.
 
 ### M2 — discovery, icons and failures (5–7, 16, 35, 44)
 

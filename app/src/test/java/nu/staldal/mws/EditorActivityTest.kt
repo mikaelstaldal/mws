@@ -74,6 +74,52 @@ class EditorActivityTest {
     }
     private fun saved() = runBlocking { repository.ordered() }
 
+    @Test fun currentPageUrlIsCopiedIntoDraftAndSavedOnlyOnSave() {
+        val original = app("live-app", "https://example.com/")
+        runBlocking { repository.add(original) }
+        val unregister = ShellServices.shared(context).shells.register(original.id,
+            close = {}, currentUrl = { "https://example.com/next" })
+        try {
+            val activity = open(original.id)
+            val button = activity.findViewById<View>(R.id.editor_use_current_url)
+            assertEquals(View.VISIBLE, button.visibility)
+            button.performClick()
+            assertEquals("https://example.com/next", activity.url().text.toString())
+            assertEquals(original.configuredUrl, saved().single().configuredUrl)
+            activity.save()
+            await { saved().single().configuredUrl == "https://example.com/next" }
+        } finally { unregister() }
+    }
+
+    @Test fun currentPageUrlActionRequiresLiveCommittedPage() {
+        val original = app("live-app", "https://example.com/")
+        runBlocking { repository.add(original) }
+        val unregister = ShellServices.shared(context).shells.register(original.id,
+            close = {}, currentUrl = { null })
+        try {
+            val activity = open(original.id)
+            assertEquals(View.GONE,
+                activity.findViewById<View>(R.id.editor_use_current_url).visibility)
+        } finally { unregister() }
+    }
+
+    @Test fun currentPageUrlActionHidesWhenLivePageBecomesUnavailable() {
+        val original = app("live-app", "https://example.com/")
+        runBlocking { repository.add(original) }
+        var current: String? = "https://example.com/next"
+        val unregister = ShellServices.shared(context).shells.register(original.id,
+            close = {}, currentUrl = { current })
+        try {
+            val activity = open(original.id)
+            val button = activity.findViewById<View>(R.id.editor_use_current_url)
+            assertEquals(View.VISIBLE, button.visibility)
+            current = null
+            button.performClick()
+            assertEquals(View.GONE, button.visibility)
+            assertEquals(original.configuredUrl, activity.url().text.toString())
+        } finally { unregister() }
+    }
+
     @Test fun schemelessUrlNormalizesAndNewAppIsAppended() {
         runBlocking { repository.add(app("existing", "https://existing.example/")) }
         val activity = open()
