@@ -17,7 +17,8 @@ jobs:
         with:
           gradle-version: '8.14.3'
       - uses: android-actions/setup-android@v3
-      - run: sdkmanager 'platforms;android-36'
+        with:
+          packages: 'platform-tools platforms;android-36'
       - run: gradle --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 
   device:
