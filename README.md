@@ -47,13 +47,10 @@ Only HTTPS sites can be saved or loaded, including local sites. Mobile Web Shell
 Run the local build, unit tests, lint, security source check, provider floor check, and JavaScript helper tests with:
 
 ```sh
-python3 scripts/check-security.py
-python3 scripts/generate-provider-floors.py --check
-node --test scripts/tests/*.cjs
 gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
-Instrumented tests require a connected device or emulator. `scripts/run-provider-qualification.sh` runs the WebView provider qualification on a connected device. The specification, acceptance procedures and test evidence are kept in a separate project administration repository.
+Instrumented tests require a connected device or emulator.
 
 ## License
 

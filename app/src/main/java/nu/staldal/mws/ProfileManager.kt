@@ -60,7 +60,7 @@ interface WebProfileBackend {
     fun basicAuthSafety(webView: WebView): () -> Boolean = { false }
 }
 
-/** The single place where WebViews are constructed and bound (checked by scripts/check-security.py). */
+/** The single place where WebViews are constructed and bound. */
 class AndroidWebProfileBackend : WebProfileBackend {
     companion object {
         // Process lifetime, even if services/backend owners are recreated. Main-thread access.

@@ -169,7 +169,7 @@ internal class BasicAuthGate(private val eligible: () -> Boolean = { true }) {
     }
 }
 
-/** The only place that answers an HTTP auth challenge; see `scripts/check-security.py`. */
+/** The only place that answers an HTTP auth challenge. */
 internal interface AuthAnswer {
     fun proceed(username: String, password: String)
     fun cancel()
