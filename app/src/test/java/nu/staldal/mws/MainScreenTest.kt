@@ -77,6 +77,21 @@ class MainScreenTest {
         controller.pause().stop().destroy()
     }
 
+    @Test fun quickUrlHasAccessibleTouchTargetHeight() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        val input = activity.findViewById<EditText>(R.id.quick_url)
+        // Exercise a compact theme/font: intrinsic text and background must not set the target size.
+        input.background = null
+        input.setPadding(0, 0, 0, 0)
+        input.textSize = 12f
+        input.measure(View.MeasureSpec.makeMeasureSpec(600, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED))
+        assertTrue("URL touch target must be at least 48dp",
+            input.measuredHeight >= kotlin.math.ceil(48 * activity.resources.displayMetrics.density).toInt())
+        controller.pause().stop().destroy()
+    }
+
     @Test fun quickLaunchValidatesAndOpensWithoutAddingAnApp() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()

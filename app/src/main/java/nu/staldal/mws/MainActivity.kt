@@ -153,6 +153,7 @@ class MainActivity : AppCompatActivity() {
         column.addView(heading)
         val urlInput = EditText(this).apply {
             id = R.id.quick_url
+            minimumHeight = kotlin.math.ceil(48 * density).toInt()
             hint = getString(R.string.editor_url_helper)
             inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
             maxLines = 1
