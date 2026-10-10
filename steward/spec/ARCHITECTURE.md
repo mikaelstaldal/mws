@@ -187,7 +187,7 @@ There is no cap on apps or widgets. Every add or update handles storage/allocati
 
 ## 7. Provider compatibility and runtime self-test
 
-- Release builds embed, per provider package, a minimum version floor generated at build time from qualifying `PASS` entries in the compatibility matrix (§15). A package absent from the matrix is incompatible. Version names must be numeric dot-separated components; unknown formats fail closed.
+- Release builds embed, per provider package, a minimum version floor from the committed `GeneratedProviderFloors.kt`, which `scripts/generate-provider-floors.py` generates from qualifying `PASS` entries in the compatibility matrix (§15); CI fails if that file is stale. A package absent from the matrix is incompatible. Version names must be numeric dot-separated components; unknown formats fail closed.
 - Shell launch and WebView-backed discovery require all of the following:
   - the provider package is listed;
   - its version is at or above the floor;
@@ -480,7 +480,7 @@ This is the normative evidence for per-package floors. Each entry records:
 - test date, suite revision and evidence location (version-controlled, immutable revision);
 - pass/fail for every provider-sensitive flow: profile isolation and deletion, cleartext rejection before transmission, Basic-auth correlation, exact-origin form-fill messaging, pre-dispatch new-window routing, full-context cookie decisions and their fail-closed fallbacks, discovery, and crash-resumable profile maintenance.
 
-An entry qualifies only if every flow passes. Shipped floors are generated from qualifying entries, and a new entry is required whenever the pinned AndroidX WebKit version changes. **Release verification fails unless at least one qualifying entry exists.**
+An entry qualifies only if every flow passes. Shipped floors are generated from qualifying entries, and a new entry is required whenever the pinned AndroidX WebKit version changes. **Floor generation, and so the CI check, fails unless at least one qualifying entry exists.**
 
 `ProviderCompatibilitySuite` packages the provider device tests; separate preparation/deletion-interruption/verification/cleanup instrumentation phases establish persisted-worker and maintenance behavior across a killed process. The [qualification procedure](ACCEPTANCE.md#provider-qualification) describes the required evidence; a passing subset or a run with skipped required tests does not qualify an entry.
 

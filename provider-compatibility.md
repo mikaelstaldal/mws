@@ -1,10 +1,11 @@
 # Provider compatibility matrix
 
 Release builds accept a WebView provider package only at or above a version with
-a `PASS` row below. `gradle :app:generateProviderCompatibilityTable` generates the
-per-package floors from this table, and release verification fails unless at
-least one qualifying row exists. A `PASS` row must use the AndroidX WebKit version
-pinned in `gradle/libs.versions.toml`.
+a `PASS` row below. `scripts/generate-provider-floors.py` generates the
+per-package floors in `GeneratedProviderFloors.kt` from this table; rerun it and
+commit the result after changing a row. It fails unless at least one qualifying
+row exists, and a `PASS` row must use the AndroidX WebKit version pinned in
+`gradle/libs.versions.toml`. CI runs it with `--check` to catch a stale file.
 
 Rows are added only after a provider qualification run
 (`scripts/run-provider-qualification.sh`) and review of its evidence. The

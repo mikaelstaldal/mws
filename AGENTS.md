@@ -19,8 +19,10 @@ the `steward/` directory). Code comments reference its sections as R§
 are tracked as issues in AWB workspace `mws`; the tests listed in an issue are
 part of its definition of done.
 
-`provider-compatibility.md` is the WebView provider compatibility matrix. The
-build generates the release provider floors from its `PASS` rows.
+`provider-compatibility.md` is the WebView provider compatibility matrix.
+`scripts/generate-provider-floors.py` generates the provider floors in
+`GeneratedProviderFloors.kt` from its `PASS` rows; rerun it and commit the result
+after changing the matrix or the AndroidX WebKit version.
 
 ## Build
 
@@ -31,6 +33,7 @@ Checks to run before committing:
 
 ```sh
 python3 scripts/check-security.py
+python3 scripts/generate-provider-floors.py --check
 node --test scripts/tests/*.cjs
 gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```

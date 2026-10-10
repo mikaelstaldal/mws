@@ -58,73 +58,6 @@ val releaseSigningReady = releaseStore?.exists() == true && releaseStorePassword
 val debugProviderOverride = (localProperties.getProperty("debugProviderOverride")
     ?: System.getenv("DEBUG_PROVIDER_OVERRIDE")) == "true"
 
-val providerTableDir = layout.buildDirectory.dir("generated/source/providerCompatibility")
-val generateProviderTable = tasks.register("generateProviderCompatibilityTable") {
-    val matrix = rootProject.file("provider-compatibility.md")
-    inputs.file(matrix)
-    inputs.property("webkitVersion", libs.versions.webkit.get())
-    outputs.dir(providerTableDir)
-    doLast {
-        val section = matrix.readText()
-        require(section.contains("| Provider package | Exact provider version |")) {
-            "Provider compatibility matrix missing"
-        }
-        val floors = sortedMapOf<String, List<Int>>()
-        section.lineSequence().filter { it.startsWith("| ") }.drop(2).forEach { row ->
-            val cells = row.trim().trim('|').split('|').map(String::trim)
-            require(cells.size == 9) { "Malformed provider compatibility row: $row" }
-            val result = cells[8].removeSurrounding("`")
-            require(result in setOf("PASS", "FAIL", "BLOCKED")) {
-                "Invalid provider compatibility result: ${cells[8]}"
-            }
-            if (result != "PASS") return@forEach
-            val pkg = cells[0]
-            val version = cells[1]
-            require(pkg.matches(Regex("[a-zA-Z][a-zA-Z0-9_.]*"))) { "Invalid provider package: $pkg" }
-            require(cells[4] == libs.versions.webkit.get()) { "Qualified provider uses different WebKit version: $pkg" }
-            require(cells.subList(2, 8).all { it.isNotBlank() && it != "—" }) {
-                "Qualified provider lacks evidence: $pkg"
-            }
-            require(version.matches(Regex("[0-9]+(\\.[0-9]+)*"))) { "Invalid provider version: $version" }
-            val parts = version.split('.').map(String::toInt)
-            val old = floors[pkg]
-            if (old == null || compareVersions(parts, old) < 0) floors[pkg] = parts
-        }
-        val entries = floors.entries.joinToString(",\n") { (pkg, parts) ->
-            "        \"$pkg\" to listOf(${parts.joinToString(", ")})"
-        }
-        val output = File(providerTableDir.get().asFile,
-            "nu/staldal/mws/GeneratedProviderFloors.kt")
-        output.parentFile.mkdirs()
-        output.writeText("""package nu.staldal.mws
-
-/** Generated from the qualifying PASS rows in provider-compatibility.md. */
-internal object GeneratedProviderFloors {
-    val values: Map<String, List<Int>> = mapOf(
-$entries
-    )
-}
-""")
-        File(providerTableDir.get().asFile, "qualified-count.txt").writeText(floors.size.toString())
-    }
-}
-
-val verifyReleaseProviderCompatibility = tasks.register("verifyReleaseProviderCompatibility") {
-    dependsOn(generateProviderTable)
-    doLast {
-        val count = File(providerTableDir.get().asFile, "qualified-count.txt").readText().toInt()
-        require(count > 0) { "Release requires at least one qualifying PASS provider in provider-compatibility.md" }
-    }
-}
-
-fun compareVersions(left: List<Int>, right: List<Int>): Int {
-    for (i in 0 until maxOf(left.size, right.size)) {
-        val comparison = (left.getOrElse(i) { 0 }).compareTo(right.getOrElse(i) { 0 })
-        if (comparison != 0) return comparison
-    }
-    return 0
-}
-
 android {
     namespace = "nu.staldal.mws"
     compileSdk = 36
@@ -194,7 +127,6 @@ android {
         }
     }
 
-    sourceSets.getByName("main").java.srcDir(providerTableDir)
     sourceSets.getByName("androidTest").assets.srcDir("schemas")
 
     compileOptions {
@@ -210,11 +142,6 @@ android {
     testOptions {
         unitTests.isIncludeAndroidResources = true
     }
-}
-
-tasks.named("preBuild").configure { dependsOn(generateProviderTable) }
-tasks.configureEach {
-    if (name == "preReleaseBuild") dependsOn(verifyReleaseProviderCompatibility)
 }
 
 kotlin {

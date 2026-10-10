@@ -414,8 +414,9 @@ JVM coverage in `ShellActivityTest` verifies scroll-top gating, gesture intercep
 ## Provider qualification
 
 A release accepts a WebView provider package only at or above a version with a
-`PASS` row in the A§15 matrix. The build derives these floors from the matrix,
-and it fails if a `PASS` row's AndroidX WebKit version differs from the pinned one.
+`PASS` row in the A§15 matrix. `scripts/generate-provider-floors.py` derives
+these floors from the matrix, and it fails if a `PASS` row's AndroidX WebKit
+version differs from the pinned one.
 Requalify when:
 
 - the AndroidX WebKit version in `gradle/libs.versions.toml` changes;
@@ -470,5 +471,5 @@ adb shell am instrument -w -r \
 - Commit the evidence directory to this repository. Then add the row to
   `provider-compatibility.md` in the source repository, naming the evidence
   directory and the commit that added it, and update A§15. Run
-  `gradle :app:generateProviderCompatibilityTable :app:verifyReleaseProviderCompatibility`
-  and check the package and floor in the generated `GeneratedProviderFloors.kt`.
+  `scripts/generate-provider-floors.py`, check the package and floor in the
+  generated `GeneratedProviderFloors.kt`, and commit both files together.

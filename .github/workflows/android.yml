@@ -17,6 +17,7 @@ jobs:
       - uses: android-actions/setup-android@v3
       - run: sdkmanager 'platforms;android-36'
       - run: python3 scripts/check-security.py
+      - run: python3 scripts/generate-provider-floors.py --check
       - run: ./gradlew --no-daemon :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 
   device:

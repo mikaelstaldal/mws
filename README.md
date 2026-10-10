@@ -44,10 +44,11 @@ Only HTTPS sites can be saved or loaded, including local sites. Mobile Web Shell
 
 ## Develop and test
 
-Run the local build, unit tests, lint, security source check, and JavaScript helper tests with:
+Run the local build, unit tests, lint, security source check, provider floor check, and JavaScript helper tests with:
 
 ```sh
 python3 scripts/check-security.py
+python3 scripts/generate-provider-floors.py --check
 node --test scripts/tests/*.cjs
 gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
