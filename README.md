@@ -50,7 +50,46 @@ Run the local build, unit tests, lint, security source check, provider floor che
 gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
-Instrumented tests require a connected device or emulator.
+Instrumented tests require a connected device with USB debugging enabled or a
+running emulator. Run them with:
+
+```sh
+gradle :app:connectedDeviceTestAndroidTest
+```
+
+Instrumented tests use the dedicated `deviceTest` build variant, with application
+ID `nu.staldal.mws.testbed` and launcher name **Mobile Web Shell (tests)**.
+It has separate app storage, including saved apps and WebView profiles, from
+the normal `nu.staldal.mws` installation. Gradle can install and uninstall the
+test variant without replacing the normal app or deleting its saved data.
+The test variant inherits debug settings and the local HTTPS test CA.
+
+Use `connectedDeviceTestAndroidTest` instead of `connectedDebugAndroidTest`;
+instrumented tests are configured to target only the deviceTest variant. Gradle
+installs the required APKs automatically.
+
+The regular run skips the four tests that require configured launcher widgets.
+To include them, first install the test variant:
+
+```sh
+gradle :app:installDeviceTest
+```
+
+Add both a single-app widget and a multi-app widget from **Mobile Web Shell
+(tests)** to the device's home screen. Create a saved app in that test
+installation if needed to complete widget configuration. Widgets belonging to
+the normal MWS installation do not count. Then run:
+
+```sh
+gradle :app:connectedDeviceTestAndroidTest \
+  -Pandroid.testInstrumentationRunnerArguments.runWidgetTests=true \
+  -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+```
+
+This includes the widget tests alongside the regular tests and keeps the test
+installation and widgets available for another run. Opted-in widget tests fail
+if the required widgets are missing. A regular run without the keep-installed
+option can uninstall the test variant and remove its widgets afterward.
 
 ## License
 

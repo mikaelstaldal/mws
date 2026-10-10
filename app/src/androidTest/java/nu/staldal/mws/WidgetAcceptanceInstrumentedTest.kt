@@ -18,6 +18,7 @@ import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Test
+import org.junit.Before
 import org.junit.runner.RunWith
 import org.json.JSONArray
 import org.json.JSONObject
@@ -30,6 +31,8 @@ import java.util.concurrent.atomic.AtomicReference
 class WidgetAcceptanceInstrumentedTest {
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context get() = instrumentation.targetContext
+
+    @Before fun requireConfiguredWidgets() = requireWidgetTestsEnabled()
 
     @Test fun missingRecordDefaultsToAllAppsAndClearingRowsCannotLaunchOrBeSelected() = runBlocking {
         val seconds = InstrumentationRegistry.getArguments().getString("holdSeconds", "0")

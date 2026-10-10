@@ -156,6 +156,12 @@ class AccessibilityInstrumentedTest {
             ids.firstOrNull() ?: error("Install a widget of this type before testing accessibility")),
             readyText = if (type == SingleWidgetConfigureActivity::class.java) R.string.widget_pick_app else R.string.widget_configure)
     }
-    @Test fun singleWidgetConfiguration() = widget(SingleWidgetConfigureActivity::class.java, SingleWidget.installed(context))
-    @Test fun multiWidgetConfiguration() = widget(MultiWidgetConfigureActivity::class.java, MultiWidget.installed(context))
+    @Test fun singleWidgetConfiguration() {
+        requireWidgetTestsEnabled()
+        widget(SingleWidgetConfigureActivity::class.java, SingleWidget.installed(context))
+    }
+    @Test fun multiWidgetConfiguration() {
+        requireWidgetTestsEnabled()
+        widget(MultiWidgetConfigureActivity::class.java, MultiWidget.installed(context))
+    }
 }

@@ -35,7 +35,7 @@ class ScaffoldInstrumentedTest {
         for (host in listOf("example.com", "localhost", "127.0.0.1", "10.0.2.2")) {
             assertFalse(policy.isCleartextTrafficPermitted(host))
         }
-        assertEquals("nu.staldal.mws", context.packageName)
+        assertEquals("nu.staldal.mws.testbed", context.packageName)
     }
 
     @Test fun webViewTrustsOnlyTheDebugTestCa() {

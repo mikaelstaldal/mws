@@ -41,4 +41,4 @@ jobs:
           api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
-          script: ./gradlew --no-daemon :app:installDebug :app:connectedDebugAndroidTest
+          script: ./gradlew --no-daemon :app:connectedDeviceTestAndroidTest

@@ -115,6 +115,12 @@ android {
         debug {
             buildConfigField("boolean", "DEBUG_PROVIDER_OVERRIDE", debugProviderOverride.toString())
         }
+        create("deviceTest") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".testbed"
+            matchingFallbacks += "debug"
+            resValue("string", "app_name", "Mobile Web Shell (tests)")
+        }
         release {
             buildConfigField("boolean", "DEBUG_PROVIDER_OVERRIDE", "false")
             isMinifyEnabled = false
@@ -127,6 +133,9 @@ android {
         }
     }
 
+    testBuildType = "deviceTest"
+    // initWith copies build settings, but not the debug source set (including the test CA).
+    sourceSets.getByName("deviceTest").setRoot("src/debug")
     sourceSets.getByName("androidTest").assets.srcDir("schemas")
 
     compileOptions {
