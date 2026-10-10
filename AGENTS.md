@@ -10,22 +10,17 @@ Keep changes focused. Do not break existing behavior, stored data (Room schema
 and profile state) or the security invariants in the spec without an explicit
 decision. A bug fix should include a regression test where one is practical.
 
-## Specification
+## Specification and issues
 
-- `spec/REQUIREMENTS.md`: functional requirements and acceptance criteria (what the app must do).
-- `spec/ARCHITECTURE.md`: technical design, constraints, data model, test strategy and the provider compatibility matrix (how it is built).
-- `spec/ACCEPTANCE.md`: criterion-to-test traceability, device acceptance procedures and WebView provider qualification.
+The specification (requirements, architecture and acceptance procedures), test
+evidence and process rules are kept in a separate steward repository (currently
+the `steward/` directory). Code comments reference its sections as R§
+(REQUIREMENTS.md) and A§ (ARCHITECTURE.md). Bugs, features and maintenance tasks
+are tracked as issues in AWB workspace `mws`; the tests listed in an issue are
+part of its definition of done.
 
-These documents describe the current behavior of the app. When a bug fix or
-feature changes requirements or architecture, update them in the same commit.
-A new acceptance criterion needs a traceability row in `ACCEPTANCE.md`.
-
-## Issues
-
-Bugs, features and maintenance tasks are tracked as issues in AWB workspace
-`mws`. Issues reference the relevant spec sections (R§ = REQUIREMENTS.md,
-A§ = ARCHITECTURE.md). The tests listed in an issue are part of its definition of
-done.
+`provider-compatibility.md` is the WebView provider compatibility matrix. The
+build generates the release provider floors from its `PASS` rows.
 
 ## Build
 
@@ -45,4 +40,4 @@ gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 You don't have access to test on a device or emulator. Ask the user to do that
 if necessary. A change that affects WebView provider behavior or bumps the
 AndroidX WebKit version needs a new provider qualification run before release
-(see "Provider qualification" in `spec/ACCEPTANCE.md`).
+(see "Provider qualification" in the steward repository's `spec/ACCEPTANCE.md`).

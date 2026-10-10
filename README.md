@@ -28,7 +28,7 @@ There is currently no published APK or Play Store release. To build and install 
    adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```
 
-Open **Mobile Web Shell** from the Android launcher. The installed WebView provider must support isolated profiles and pass the app's compatibility check. If it does not, the app shows a reason and update options; saved apps cannot launch until compatibility is restored. The [provider compatibility matrix](spec/ARCHITECTURE.md#15-provider-compatibility-matrix) records qualified versions.
+Open **Mobile Web Shell** from the Android launcher. The installed WebView provider must support isolated profiles and pass the app's compatibility check. If it does not, the app shows a reason and update options; saved apps cannot launch until compatibility is restored. The [provider compatibility matrix](provider-compatibility.md) records qualified versions.
 
 ### Optional MyPass integration
 
@@ -52,7 +52,7 @@ node --test scripts/tests/*.cjs
 gradle :app:assembleDebug :app:testDebugUnitTest :app:lintDebug
 ```
 
-Instrumented tests require a connected device or emulator. The [acceptance guide](spec/ACCEPTANCE.md) has the full test commands, manual checks, and provider qualification procedure. Project behavior is specified in [requirements](spec/REQUIREMENTS.md) and [architecture](spec/ARCHITECTURE.md); update those documents when a change affects them.
+Instrumented tests require a connected device or emulator. `scripts/run-provider-qualification.sh` runs the WebView provider qualification on a connected device. The specification, acceptance procedures and test evidence are kept in a separate project administration repository.
 
 ## License
 

@@ -60,13 +60,12 @@ val debugProviderOverride = (localProperties.getProperty("debugProviderOverride"
 
 val providerTableDir = layout.buildDirectory.dir("generated/source/providerCompatibility")
 val generateProviderTable = tasks.register("generateProviderCompatibilityTable") {
-    val matrix = rootProject.file("spec/ARCHITECTURE.md")
+    val matrix = rootProject.file("provider-compatibility.md")
     inputs.file(matrix)
     inputs.property("webkitVersion", libs.versions.webkit.get())
     outputs.dir(providerTableDir)
     doLast {
-        val section = matrix.readText().substringAfter("## 15. Provider compatibility matrix\n")
-            .substringBefore("\n## ")
+        val section = matrix.readText()
         require(section.contains("| Provider package | Exact provider version |")) {
             "Provider compatibility matrix missing"
         }
@@ -99,7 +98,7 @@ val generateProviderTable = tasks.register("generateProviderCompatibilityTable")
         output.parentFile.mkdirs()
         output.writeText("""package nu.staldal.mws
 
-/** Generated from the qualifying PASS rows in ARCHITECTURE.md §15. */
+/** Generated from the qualifying PASS rows in provider-compatibility.md. */
 internal object GeneratedProviderFloors {
     val values: Map<String, List<Int>> = mapOf(
 $entries
@@ -114,7 +113,7 @@ val verifyReleaseProviderCompatibility = tasks.register("verifyReleaseProviderCo
     dependsOn(generateProviderTable)
     doLast {
         val count = File(providerTableDir.get().asFile, "qualified-count.txt").readText().toInt()
-        require(count > 0) { "Release requires at least one qualifying PASS provider in ARCHITECTURE.md §15" }
+        require(count > 0) { "Release requires at least one qualifying PASS provider in provider-compatibility.md" }
     }
 }
 

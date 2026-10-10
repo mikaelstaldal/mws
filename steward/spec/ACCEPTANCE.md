@@ -19,10 +19,10 @@ put actual credentials or sensitive URL values in the log or screenshots.
 Install both widget types before the unfiltered instrumentation run; its widget
 and accessibility tests require actual widget instances.
 Store the result log and raw reports in a dated `acceptance-evidence-YYYYMMDD/`
-directory committed with the tested source revision. Begin with all 47 rows
-marked **not run**; change each row only when its automated and manual evidence
-has been collected. For a bug fix or feature, run at least the rows and
-procedures for the affected criteria.
+directory committed to this repository, recording the tested source revision.
+Begin with all 47 rows marked **not run**; change each row only when its
+automated and manual evidence has been collected. For a bug fix or feature, run
+at least the rows and procedures for the affected criteria.
 
 ```sh
 gradle :app:testDebugUnitTest :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest
@@ -440,7 +440,8 @@ unlisted provider can run (release builds never permit it). It records build
 and device metadata, runs the four `RestartQualificationInstrumentedTest` phases
 and then `ProviderCompatibilitySuite` (37 tests), with a force-stop before each.
 It aborts on a failure, a required skip or an unexpected test count. Reports go
-to a new `provider-evidence-*` directory. An unfiltered instrumentation run can
+to a new `provider-evidence-*` directory in the source checkout; move it into
+this repository for review. An unfiltered instrumentation run can
 execute the suite and its member classes twice and skips the restart phases, so
 it does not count as qualification.
 
@@ -466,6 +467,8 @@ adb shell am instrument -w -r \
   a POST-preserving redirect, make the provider incompatible. Do not waive it.
 - Full-context discovery cookies stay disabled unless separately qualified. The
   credentialless fallback is what the suite qualifies.
-- Commit the evidence directory, then add the A§15 row linking to that commit.
-  Run `gradle :app:generateProviderCompatibilityTable :app:verifyReleaseProviderCompatibility`
+- Commit the evidence directory to this repository. Then add the row to
+  `provider-compatibility.md` in the source repository, naming the evidence
+  directory and the commit that added it, and update A§15. Run
+  `gradle :app:generateProviderCompatibilityTable :app:verifyReleaseProviderCompatibility`
   and check the package and floor in the generated `GeneratedProviderFloors.kt`.

@@ -484,9 +484,12 @@ An entry qualifies only if every flow passes. Shipped floors are generated from 
 
 `ProviderCompatibilitySuite` packages the provider device tests; separate preparation/deletion-interruption/verification/cleanup instrumentation phases establish persisted-worker and maintenance behavior across a killed process. The [qualification procedure](ACCEPTANCE.md#provider-qualification) describes the required evidence; a passing subset or a run with skipped required tests does not qualify an entry.
 
-| Provider package | Exact provider version | Android/API and image | Architecture | AndroidX WebKit | Test date | Suite revision | Evidence | Result |
-| --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| com.google.android.webview | 153.0.8010.36 | Android 16 / API 36; Samsung Galaxy S25 SM-S931B | arm64-v8a | 1.17.1 | 2026-09-28 | `c03ceeadbafc55a2196689f5b1aec8257a463bac` | [37 suite tests and four restart phases](../provider-evidence-20260928T084927Z/) at `374f8e2e9b8a801a75bda1da3780e851850983f4` | `PASS` |
+The matrix itself is `provider-compatibility.md` in the source repository, because
+the build reads it to generate the floors. Its evidence directories are kept in
+this repository; the current `PASS` entry, `com.google.android.webview`
+153.0.8010.36 on a Samsung Galaxy S25 (Android 16 / API 36, arm64-v8a, AndroidX
+WebKit 1.17.1, suite revision `c03ceead`), is backed by
+[provider-evidence-20260928T084927Z](../provider-evidence-20260928T084927Z/).
 
 All 37 suite tests and the four separate process-restart phases passed without
 required skips. Discovery's credentialless fallback passed; full-context native
