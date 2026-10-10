@@ -28,7 +28,7 @@ There is currently no published APK or Play Store release. To build and install 
    adb install -r app/build/outputs/apk/debug/app-debug.apk
    ```
 
-Open **Mobile Web Shell** from the Android launcher. The installed WebView provider must support isolated profiles and pass the app's compatibility check. If it does not, the app shows a reason and update options; saved apps cannot launch until compatibility is restored. The [provider compatibility matrix](provider-compatibility.md) records qualified versions.
+Open **Mobile Web Shell** from the Android launcher. The installed WebView provider must support isolated profiles and pass the app's compatibility check. If it does not, the app shows a reason and update options; saved apps cannot launch until compatibility is restored.
 
 ### Optional MyPass integration
 
