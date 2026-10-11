@@ -57,6 +57,13 @@ class MainScreenTest {
         controls.forEach { assertTrue(activity.findViewById<View>(it).isEnabled) }
         assertEquals(activity.getString(R.string.provider_check_complete),
             activity.findViewById<TextView>(R.id.provider_check_status).text.toString())
+        val status = activity.findViewById<View>(R.id.provider_check_status)
+        val looper = Shadows.shadowOf(android.os.Looper.getMainLooper())
+        assertEquals(View.VISIBLE, status.visibility)
+        looper.idleFor(java.time.Duration.ofSeconds(2))
+        assertEquals(View.VISIBLE, status.visibility)
+        looper.idleFor(java.time.Duration.ofSeconds(1))
+        assertEquals(View.GONE, status.visibility)
         controller.pause().stop().destroy()
         ShellServices.install(services)
     }

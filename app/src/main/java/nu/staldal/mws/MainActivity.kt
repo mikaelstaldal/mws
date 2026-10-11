@@ -24,6 +24,7 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -229,6 +230,10 @@ class MainActivity : AppCompatActivity() {
             setStartupReady(!failed)
             if (!failed) confirmImport()
             compatibilityEntry.visibility = if (compatibility.current().compatible) View.GONE else View.VISIBLE
+            if (!failed) {
+                delay(3_000)
+                progress.visibility = View.GONE
+            }
         }
         observation = lifecycleScope.launch {
             try { ShellServices.shared(this@MainActivity).awaitStartup() }
