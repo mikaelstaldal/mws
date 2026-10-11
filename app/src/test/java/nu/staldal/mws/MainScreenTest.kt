@@ -77,6 +77,40 @@ class MainScreenTest {
         controller.pause().stop().destroy()
     }
 
+    @Test fun transferControlsOpenDocumentPickersAndWarnBeforeExport() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        activity.findViewById<View>(R.id.import_apps).performClick()
+        val opened = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(android.content.Intent.ACTION_OPEN_DOCUMENT, opened.action)
+        activity.findViewById<View>(R.id.export_apps).performClick()
+        val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.appcompat.app.AlertDialog
+        assertTrue(dialog.findViewById<TextView>(android.R.id.message)!!.text.contains("secrets"))
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        dialog.getButton(android.content.DialogInterface.BUTTON_POSITIVE).performClick()
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        val created = Shadows.shadowOf(activity).nextStartedActivity
+        assertEquals(android.content.Intent.ACTION_CREATE_DOCUMENT, created.action)
+        assertEquals("application/json", created.type)
+        assertEquals("mws-apps.json", created.getStringExtra(android.content.Intent.EXTRA_TITLE))
+        controller.pause().stop().destroy()
+    }
+
+    @Test fun pendingImportConfirmationSurvivesRotationAndCancelAddsNothing() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val state = androidx.lifecycle.ViewModelProvider(controller.get())[ConfigurationTransferState::class.java]
+        state.pending = listOf(app("imported", "Imported", 0))
+        controller.recreate()
+        val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.appcompat.app.AlertDialog
+        assertTrue(dialog.isShowing)
+        assertTrue(dialog.findViewById<TextView>(android.R.id.message)!!.text.contains("Add 1 apps"))
+        dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick()
+        Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
+        assertNull(state.pending)
+        assertTrue(runBlocking { ConfigurationRepository(database).ordered().isEmpty() })
+        controller.pause().stop().destroy()
+    }
+
     @Test fun quickUrlHasAccessibleTouchTargetHeight() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()

@@ -55,6 +55,99 @@ class MainActivity : AppCompatActivity() {
     private var quickLaunching = false
 
 
+    private val transferState by lazy {
+        androidx.lifecycle.ViewModelProvider(this)[ConfigurationTransferState::class.java]
+    }
+
+    private val exportDocument = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.CreateDocument("application/json")
+    ) { uri ->
+        if (uri != null) lifecycleScope.launch {
+            try {
+                ShellServices.shared(this@MainActivity).awaitStartup()
+                val apps = repository.ordered()
+                withContext(NonCancellable + Dispatchers.IO) {
+                    val payload = ConfigurationTransfer.encode(apps)
+                    checkNotNull(contentResolver.openOutputStream(uri, "wt")).use {
+                        it.write(payload.toByteArray(Charsets.UTF_8))
+                    }
+                }
+                Toast.makeText(this@MainActivity, R.string.export_complete, Toast.LENGTH_LONG).show()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { transferFailed() }
+        }
+    }
+    private val importDocument = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) lifecycleScope.launch {
+            try {
+                val apps = withContext(Dispatchers.IO) {
+                    val bytes = checkNotNull(contentResolver.openInputStream(uri)).use {
+                        val output = java.io.ByteArrayOutputStream()
+                        val buffer = ByteArray(8192)
+                        while (true) {
+                            val count = it.read(buffer)
+                            if (count < 0) break
+                            require(output.size() + count <= ConfigurationTransfer.MAX_BYTES)
+                            output.write(buffer, 0, count)
+                        }
+                        output.toByteArray()
+                    }
+                    require(bytes.size <= ConfigurationTransfer.MAX_BYTES)
+                    val payload = Charsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+                    ConfigurationTransfer.decode(payload)
+                }
+                transferState.pending = apps
+                confirmImport()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { transferFailed() }
+        }
+    }
+
+    private fun confirmImport() {
+        val apps = transferState.pending ?: return
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(R.string.import_apps)
+            .setMessage(getString(R.string.import_confirmation, apps.size))
+            .setOnCancelListener { transferState.pending = null }
+            .setNegativeButton(android.R.string.cancel) { _, _ -> transferState.pending = null }
+            .setPositiveButton(R.string.import_apps) { _, _ ->
+                transferState.pending = null
+                importApps(apps)
+            }
+            .show()
+    }
+
+    private fun transferFailed() {
+        Toast.makeText(this, R.string.transfer_failed, Toast.LENGTH_LONG).show()
+    }
+
+    private fun importApps(apps: List<ConfiguredApp>) {
+        lifecycleScope.launch {
+            try {
+                ShellServices.shared(this@MainActivity).awaitStartup()
+                val result = withContext(NonCancellable) {
+                    val confirmed = apps.map { app ->
+                        val consent = listOfNotNull(app.configuredUrl, app.finalUrl, app.launchUrl)
+                            .fold(SensitiveUrlConsent.NONE) { consent, url -> consent.grant(url) }
+                        app.copy(sensitiveUrlConsent = consent.serialize())
+                    }
+                    repository.importApps(confirmed).also {
+                        if (it == ConfigurationWriteResult.Success) withContext(Dispatchers.IO) {
+                            MultiWidget.refresh(applicationContext)
+                            SingleWidget.refresh(applicationContext)
+                        }
+                    }
+                }
+                if (result == ConfigurationWriteResult.Success) {
+                    Toast.makeText(this@MainActivity, R.string.import_complete, Toast.LENGTH_LONG).show()
+                } else transferFailed()
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { transferFailed() }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         myPassClient = MyPassClient(this)
@@ -66,6 +159,7 @@ class MainActivity : AppCompatActivity() {
         onBackPressedDispatcher.addCallback(this, reorderBack)
         draft = savedInstanceState?.getStringArrayList("reorderDraft")?.toMutableList()
         buildScreen()
+        confirmImport()
     }
 
     override fun onResume() {
@@ -207,6 +301,17 @@ class MainActivity : AppCompatActivity() {
         }
         done = button(R.id.reorder_done, R.string.reorder_done) { saveOrder() }
         cancel = button(R.id.reorder_cancel, R.string.reorder_cancel) { cancelOrder() }
+        button(R.id.import_apps, R.string.import_apps) {
+            if (draft == null) importDocument.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+        }
+        button(R.id.export_apps, R.string.export_apps) {
+            if (draft == null) androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle(R.string.export_apps)
+                .setMessage(R.string.export_confirmation)
+                .setNegativeButton(android.R.string.cancel, null)
+                .setPositiveButton(R.string.export_apps) { _, _ -> exportDocument.launch("mws-apps.json") }
+                .show()
+        }
         column.addView(controls)
 
         compatibilityEntry = com.google.android.material.button.MaterialButton(this).apply {
@@ -276,6 +381,8 @@ class MainActivity : AppCompatActivity() {
         reorder.visibility = if (editing || currentApps.isEmpty()) View.GONE else View.VISIBLE
         done.visibility = if (editing) View.VISIBLE else View.GONE
         cancel.visibility = done.visibility
+        findViewById<View>(R.id.import_apps).visibility = if (editing) View.GONE else View.VISIBLE
+        findViewById<View>(R.id.export_apps).visibility = if (editing) View.GONE else View.VISIBLE
         done.isEnabled = !saving
         cancel.isEnabled = !saving
         addButton.visibility = if (editing) View.GONE else View.VISIBLE
@@ -468,4 +575,9 @@ class MainActivity : AppCompatActivity() {
         if (clearing) ViewCompat.setStateDescription(row, getString(R.string.clearing_state))
         return row
     }
+}
+
+/** Holds parsed configuration only until the user confirms or cancels the import. */
+class ConfigurationTransferState : androidx.lifecycle.ViewModel() {
+    internal var pending: List<ConfiguredApp>? = null
 }

@@ -42,6 +42,21 @@ class ConfigurationRepository(private val database: ConfigurationDatabase) {
         }
     }
 
+    /** Append the entire validated import or roll back all of it. */
+    suspend fun importApps(apps: List<ConfiguredApp>): ConfigurationWriteResult = write {
+        database.withTransaction {
+            if (apps.map { it.id }.toSet().size != apps.size || apps.any { dao.get(it.id) != null }) {
+                return@withTransaction ConfigurationWriteResult.DuplicateApp
+            }
+            repairPositions()
+            val start = dao.ordered().size
+            apps.forEachIndexed { index, app ->
+                dao.insert(app.copy(sortPosition = start + index))
+            }
+            ConfigurationWriteResult.Success
+        }
+    }
+
     suspend fun update(app: ConfiguredApp): ConfigurationWriteResult = write {
         database.withTransaction {
             val saved = dao.get(app.id) ?: return@withTransaction ConfigurationWriteResult.MissingApp

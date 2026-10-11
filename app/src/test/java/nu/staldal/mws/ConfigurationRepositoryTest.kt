@@ -130,6 +130,22 @@ class ConfigurationRepositoryTest {
         }
     }
 
+    @Test fun importAppendsInOrderAndRollsBackOnFailure() = runBlocking {
+        repository.add(app("existing"))
+        assertEquals(ConfigurationWriteResult.Success, repository.importApps(listOf(app("a"), app("b"))))
+        assertOrder("existing", "a", "b")
+        assertEquals(ConfigurationWriteResult.DuplicateApp, repository.importApps(listOf(app("new"), app("a"))))
+        assertOrder("existing", "a", "b")
+        database.openHelper.writableDatabase.execSQL("""CREATE TRIGGER fail_import BEFORE INSERT
+            ON configured_apps WHEN NEW.id = 'fail' BEGIN SELECT RAISE(ABORT, 'interrupted'); END""")
+        try {
+            repository.importApps(listOf(app("new"), app("fail")))
+            fail("Expected interrupted import")
+        } catch (_: android.database.sqlite.SQLiteException) {
+            assertOrder("existing", "a", "b")
+        }
+    }
+
     @Test fun productionDatabaseUsesBackupName() {
         val context = RuntimeEnvironment.getApplication()
         database.close()

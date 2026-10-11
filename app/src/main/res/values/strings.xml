@@ -143,4 +143,11 @@
     <string name="drag_handle_symbol" translatable="false">☰</string>
     <string name="widget_app_status">%1$s — %2$s</string>
     <string name="editor_discovery_auth_required">Authentication required – select Refresh site details.</string>
+    <string name="import_apps">Import apps</string>
+    <string name="export_apps">Export apps</string>
+    <string name="import_confirmation">Add %1$d apps from this file? Existing apps will remain. Imported apps start with empty site data. Only import files you trust. URLs may contain tokens or other secrets; importing confirms that these URLs can be saved and included in device backups.</string>
+    <string name="export_confirmation">Export all saved app settings? Saved URLs may contain tokens or other secrets. Keep the exported file private. Cookies, login sessions and site data are excluded.</string>
+    <string name="import_complete">Apps imported</string>
+    <string name="export_complete">Apps exported</string>
+    <string name="transfer_failed">Could not transfer apps. Check the file format and available storage, then try again.</string>
 </resources>

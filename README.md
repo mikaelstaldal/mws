@@ -42,6 +42,8 @@ The editor can clear one app's cookies and site data or remove the app. Both act
 
 Only HTTPS sites can be saved or loaded, including local sites. Mobile Web Shell is intended for trusted web apps, and it does not manage downloads or act as a general browser. Sensitive-looking URL parameters require confirmation because saved URLs can be included in device backup or transfer.
 
+Use **Import apps** and **Export apps** to transfer saved app settings through a JSON file. See the [file format and import behavior](docs/import-export.md).
+
 ## Develop and test
 
 Run the local build, unit tests, lint, security source check, provider floor check, and JavaScript helper tests with:

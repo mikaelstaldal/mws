@@ -43,4 +43,6 @@
     <item name="editor_remove" type="id" />
     <item name="editor_maintenance_status" type="id" />
     <item name="shell_error_message" type="id" />
+    <item name="import_apps" type="id" />
+    <item name="export_apps" type="id" />
 </resources>
