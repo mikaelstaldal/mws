@@ -151,4 +151,6 @@
     <string name="import_complete">Apps imported</string>
     <string name="export_complete">Apps exported</string>
     <string name="transfer_failed">Could not transfer apps. Check the file format and available storage, then try again.</string>
+    <string name="editor_redirect_notice">This URL redirects to %1$s</string>
+    <string name="editor_use_redirected_url">Use redirected URL</string>
 </resources>

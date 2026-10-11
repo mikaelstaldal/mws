@@ -10,9 +10,9 @@ class DiscoveryAttemptTest {
         val state = DiscoveryAttempt(1, configured, DiscoveryTrigger.REFRESH)
         state.start(100)
         assertTrue(state.commit("https://login.example.net/"))
-        assertEquals(DiscoveryDocumentResult(null, true), state.documentResult)
+        assertEquals(DiscoveryDocumentResult(null, true, redirectedUrl = "https://login.example.net/"), state.documentResult)
         assertFalse(state.commit("https://example.com/late"))
-        assertEquals(DiscoveryDocumentResult(null, true), state.documentResult)
+        assertEquals(DiscoveryDocumentResult(null, true, redirectedUrl = "https://login.example.net/"), state.documentResult)
     }
 
     @Test fun redirectDoesNotResetInitialDeadlineAndNoCommitHasNoFinalUrl() {

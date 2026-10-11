@@ -12,8 +12,15 @@ class EditorDiscovery(private val saved: ConfiguredApp?, val configuredUrl: Stri
         set(value) { field = value; nameStageCompleted = true }
     var icon: SelectedIcon? = null
     private var documentCompleted = false
+    var redirectedUrl: String? = null
+        private set
+
+    fun clearRedirect() { redirectedUrl = null }
 
     fun document(result: DiscoveryDocumentResult) {
+        redirectedUrl = if (result.failure == null)
+            (result.redirectedUrl ?: result.finalUrl)?.let(UrlPolicy::parseHttps)?.serialized
+                ?.takeIf { it != configuredUrl } else null
         if (result.failure != null || result.crossOrigin) return
         documentCompleted = true
         finalUrl = result.finalUrl

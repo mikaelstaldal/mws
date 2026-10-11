@@ -29,6 +29,33 @@ class EditorDiscoveryTest {
         assertEquals(saved, stages.apply(saved))
     }
 
+    @Test fun redirectsAreOfferedWithoutAdoptingCrossOriginMetadata() {
+        val saved = record()
+        val stages = EditorDiscovery(saved, url)
+        stages.document(DiscoveryDocumentResult(null, true,
+            redirectedUrl = "https://other.example/new"))
+        assertEquals("https://other.example/new", stages.redirectedUrl)
+        assertEquals(saved, stages.apply(saved))
+        stages.document(DiscoveryDocumentResult(null, false, DiscoveryDocumentFailure.LOAD_ERROR))
+        assertNull(stages.redirectedUrl)
+    }
+
+    @Test fun clearingRedirectRetainsDiscoveredMetadata() {
+        val stages = EditorDiscovery(null, url)
+        stages.document(DiscoveryDocumentResult("$url/final", false))
+        stages.clearRedirect()
+        assertNull(stages.redirectedUrl)
+        assertEquals("$url/final", stages.finalUrl)
+    }
+
+    @Test fun sameOriginRedirectIsOfferedButUnchangedCommitIsNot() {
+        val stages = EditorDiscovery(null, url)
+        stages.document(DiscoveryDocumentResult("$url/final", false))
+        assertEquals("$url/final", stages.redirectedUrl)
+        stages.document(DiscoveryDocumentResult(url, false))
+        assertNull(stages.redirectedUrl)
+    }
+
     @Test fun changedUrlImmediatelyUsesFallbacksAndOfflineIsRecoverable() {
         val saved = record()
         val changed = "https://example.com/other"

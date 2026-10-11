@@ -74,6 +74,48 @@ class EditorActivityTest {
     }
     private fun saved() = runBlocking { repository.ordered() }
 
+    @Test fun redirectActionUpdatesOnlyDraftAndDisappearsAfterUrlChange() {
+        val activity = open()
+        activity.url().setText("https://example.com/start")
+        activity.name().setText("My app")
+        val stagesField = EditorActivity::class.java.getDeclaredField("stages").apply { isAccessible = true }
+        val stages = stagesField.get(activity) as EditorDiscovery
+        stages.document(DiscoveryDocumentResult(null, true,
+            redirectedUrl = "https://other.example/target"))
+        EditorActivity::class.java.getDeclaredMethod("updateDiscoveryPreview").apply {
+            isAccessible = true
+        }.invoke(activity)
+        val notice = activity.findViewById<TextView>(R.id.editor_redirect_notice)
+        val button = activity.findViewById<View>(R.id.editor_use_redirected_url)
+        assertEquals(View.VISIBLE, notice.visibility)
+        assertTrue(notice.text.contains("https://other.example/target"))
+        assertEquals(View.VISIBLE, button.visibility)
+        assertEquals("https://example.com/start", activity.url().text.toString())
+        button.performClick()
+        assertEquals("https://other.example/target", activity.url().text.toString())
+        assertEquals("My app", activity.name().text.toString())
+        assertEquals(View.GONE, button.visibility)
+        assertEquals(View.GONE, notice.visibility)
+        assertTrue(saved().isEmpty())
+    }
+
+    @Test fun refreshClearsPreviousRedirectOffer() {
+        val activity = open()
+        activity.url().setText("https://example.com/start")
+        val stages = EditorActivity::class.java.getDeclaredField("stages").apply {
+            isAccessible = true
+        }.get(activity) as EditorDiscovery
+        stages.document(DiscoveryDocumentResult(null, true,
+            redirectedUrl = "https://other.example/target"))
+        EditorActivity::class.java.getDeclaredMethod("updateDiscoveryPreview").apply {
+            isAccessible = true
+        }.invoke(activity)
+        activity.findViewById<View>(R.id.editor_refresh_details).performClick()
+        assertNull(stages.redirectedUrl)
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.editor_use_redirected_url).visibility)
+        assertEquals("https://example.com/start", activity.url().text.toString())
+    }
+
     @Test fun currentPageUrlIsCopiedIntoDraftAndSavedOnlyOnSave() {
         val original = app("live-app", "https://example.com/")
         runBlocking { repository.add(original) }

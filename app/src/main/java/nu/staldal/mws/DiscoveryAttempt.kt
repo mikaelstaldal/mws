@@ -5,6 +5,8 @@ data class DiscoveryDocumentResult(
     val finalUrl: String?,
     val crossOrigin: Boolean,
     val failure: DiscoveryDocumentFailure? = null,
+    /** Committed HTTPS destination for user adoption; never authorizes cross-origin metadata. */
+    val redirectedUrl: String? = null,
 )
 
 enum class DiscoveryDocumentFailure { HTTPS_REQUIRED, TLS_ERROR, LOAD_ERROR, TIMEOUT }
@@ -63,6 +65,7 @@ class DiscoveryAttempt(
         documentResult = DiscoveryDocumentResult(
             parsed?.serialized?.takeIf { parsed.origin == configuredUrl.origin },
             parsed != null && parsed.origin != configuredUrl.origin,
+            redirectedUrl = parsed?.serialized?.takeIf { it != configuredUrl.serialized },
         )
         return true
     }

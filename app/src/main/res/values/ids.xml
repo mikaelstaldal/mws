@@ -46,4 +46,6 @@
     <item name="shell_error_message" type="id" />
     <item name="import_apps" type="id" />
     <item name="export_apps" type="id" />
+    <item name="editor_redirect_notice" type="id" />
+    <item name="editor_use_redirected_url" type="id" />
 </resources>

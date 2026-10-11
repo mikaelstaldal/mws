@@ -70,6 +70,8 @@ class EditorActivity : AppCompatActivity() {
     private lateinit var discoveryHost: FrameLayout
     private lateinit var discoveryStatus: TextView
     private lateinit var discoveryUrl: TextView
+    private lateinit var redirectNotice: TextView
+    private lateinit var useRedirectedUrlButton: MaterialButton
     private lateinit var suggestion: MaterialButton
     private lateinit var iconPreview: ImageView
     private var discovery: DiscoverySession? = null
@@ -106,6 +108,7 @@ class EditorActivity : AppCompatActivity() {
                     fetchMetadata(attempt, null)
                 }
             }, onOverallTimeout = { _ ->
+                stages?.clearRedirect()
                 nativeClient?.cancel()
                 metadataJob?.cancel()
                 discoveryStatus.setText(R.string.editor_discovery_failed)
@@ -180,6 +183,7 @@ class EditorActivity : AppCompatActivity() {
 
     private fun updateDiscoveryPreview() {
         val current = stages ?: return
+        updateRedirectPreview()
         val proposed = current.suggestedName()
         if (nameSource != NameSource.USER_EDITED) {
             setProgrammatically { nameField.setText(proposed) }
@@ -192,6 +196,14 @@ class EditorActivity : AppCompatActivity() {
         discoveryUrl.text = current.resolved().launchUrl
         if (current.icon != null) iconPreview.setImageBitmap(current.icon?.source)
         else showRetainedIcon()
+    }
+
+    private fun updateRedirectPreview() {
+        val target = stages?.redirectedUrl
+        redirectNotice.text = target?.let { getString(R.string.editor_redirect_notice, it) }.orEmpty()
+        redirectNotice.visibility = if (target == null) View.GONE else View.VISIBLE
+        useRedirectedUrlButton.visibility = if (target == null) View.GONE else View.VISIBLE
+        useRedirectedUrlButton.isEnabled = !saving && !maintaining && !removing
     }
 
     private fun showRetainedIcon() {
@@ -308,6 +320,23 @@ class EditorActivity : AppCompatActivity() {
             }
         }
         column.addView(useCurrentUrlButton)
+        redirectNotice = TextView(this).apply {
+            id = R.id.editor_redirect_notice
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            visibility = View.GONE
+        }
+        column.addView(redirectNotice)
+        useRedirectedUrlButton = MaterialButton(this).apply {
+            id = R.id.editor_use_redirected_url
+            setText(R.string.editor_use_redirected_url)
+            visibility = View.GONE
+            setOnClickListener {
+                val target = stages?.redirectedUrl ?: return@setOnClickListener
+                urlField.setText(target)
+                urlField.setSelection(urlField.length())
+            }
+        }
+        column.addView(useRedirectedUrlButton)
         nameField = TextInputEditText(this).apply {
             id = R.id.editor_name
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
@@ -343,6 +372,8 @@ class EditorActivity : AppCompatActivity() {
                 val url = UrlPolicy.normalizeUserInput(urlField.text.toString()) ?: return@setOnClickListener
                 cancelDiscovery()
                 if (stages?.configuredUrl != url.serialized) stages = EditorDiscovery(saved, url.serialized)
+                stages?.clearRedirect()
+                updateRedirectPreview()
                 discoveryStatus.setText(R.string.editor_discovery_loading)
                 discovery?.refresh(url.serialized)
             }
@@ -518,6 +549,7 @@ class EditorActivity : AppCompatActivity() {
         saveButton.isEnabled = loaded && !saving && !maintaining && !removing &&
             (!pendingOriginChange || saved?.profileState == ProfileState.CLEARING)
         updateCurrentUrlButton()
+        updateRedirectPreview()
     }
 
     private fun updateCurrentUrlButton() {
@@ -603,6 +635,7 @@ class EditorActivity : AppCompatActivity() {
         if (canonical != stages?.configuredUrl) {
             cancelDiscovery()
             stages = canonical?.let { EditorDiscovery(saved, it) }
+            updateRedirectPreview()
             suggestion.visibility = View.GONE
             showRetainedIcon()
             discoveryUrl.text = canonical.orEmpty()
