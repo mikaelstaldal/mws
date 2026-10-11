@@ -76,8 +76,8 @@ class ProviderSelfTestTest {
                     override suspend fun run(): Boolean { deletionRuns++; return true }
                 },
             ))
-            runner.runIfNeeded()
-            runner.runIfNeeded()
+            assertTrue(runner.runIfNeeded())
+            assertFalse(runner.runIfNeeded())
             assertEquals(1, isolationRuns)
             assertEquals(1, deletionRuns)
             val result = SelfTestEncoding.decode(key, store.selfTest())!!
@@ -88,7 +88,7 @@ class ProviderSelfTestTest {
             assertFalse(result.formFill)
             snapshot = ProviderSnapshot(key.copy(version = "1.3"), true)
             assertNull(SelfTestEncoding.decode(snapshot.key!!, store.selfTest()))
-            runner.runIfNeeded()
+            assertTrue(runner.runIfNeeded())
             assertEquals(2, isolationRuns)
             assertEquals(2, deletionRuns)
         }

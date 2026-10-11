@@ -23,7 +23,7 @@ class ShellServices(
     val shells: LiveShellRegistry,
     val profiles: ProfileManager,
     val icons: IconStore,
-    private val selfTest: (suspend () -> Unit)? = null,
+    private val selfTest: (suspend () -> Boolean)? = null,
     private val reconcileWidgets: (suspend () -> Unit)? = null,
 ) {
     val editorMaintenance = EditorMaintenance(profiles, repository)
@@ -33,6 +33,12 @@ class ShellServices(
     private var startupCompatible = false
     private var selfTestAttempted = false
     private var selfTestKey: ProviderKey? = null
+    private var selfTestCompletedAt: Long? = null
+
+    /** Only a newly performed check starts the completion message's three-second window. */
+    fun checkMessageRemainingMillis(): Long = selfTestCompletedAt?.let {
+        (3_000 - (android.os.SystemClock.elapsedRealtime() - it)).coerceAtLeast(0)
+    } ?: 0
 
     /**
      * A§5.3: maintenance runs once per process, before the first profile attaches. A failed run
@@ -42,7 +48,9 @@ class ShellServices(
         profiles.prepareConfiguration()
         val currentKey = compatibility.current().key
         if (!selfTestAttempted || currentKey != selfTestKey) {
-            selfTest?.invoke()
+            if (selfTest?.invoke() == true) {
+                selfTestCompletedAt = android.os.SystemClock.elapsedRealtime()
+            }
             selfTestKey = currentKey
             selfTestAttempted = true
         }

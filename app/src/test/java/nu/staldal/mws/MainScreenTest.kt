@@ -39,7 +39,7 @@ class MainScreenTest {
         val services = ShellServices.shared(context)
         val checked = kotlinx.coroutines.CompletableDeferred<Unit>()
         ShellServices.install(ShellServices(services.repository, services.compatibility,
-            services.shells, services.profiles, services.icons, selfTest = { checked.await() }))
+            services.shells, services.profiles, services.icons, selfTest = { checked.await(); true }))
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
         val controls = listOf(R.id.add_web_app, R.id.empty_add, R.id.import_apps,
@@ -62,10 +62,33 @@ class MainScreenTest {
         assertEquals(View.VISIBLE, status.visibility)
         looper.idleFor(java.time.Duration.ofSeconds(2))
         assertEquals(View.VISIBLE, status.visibility)
+        controller.pause().resume()
+        await { activity.findViewById<View>(R.id.add_web_app).isEnabled }
         looper.idleFor(java.time.Duration.ofSeconds(1))
         assertEquals(View.GONE, status.visibility)
+        controller.pause().resume()
+        await { activity.findViewById<View>(R.id.add_web_app).isEnabled }
+        assertEquals(View.GONE, status.visibility)
+        controller.recreate()
+        await { controller.get().findViewById<View>(R.id.add_web_app).isEnabled }
+        assertEquals(View.GONE, controller.get().findViewById<View>(R.id.provider_check_status).visibility)
         controller.pause().stop().destroy()
         ShellServices.install(services)
+    }
+
+    @Test fun cachedCheckDoesNotShowCompletionOnNewStart() {
+        val services = ShellServices.shared(context)
+        ShellServices.install(ShellServices(services.repository, services.compatibility,
+            services.shells, services.profiles, services.icons, selfTest = { false }))
+        try {
+            val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+            await { controller.get().findViewById<View>(R.id.add_web_app).isEnabled }
+            assertEquals(View.GONE,
+                controller.get().findViewById<View>(R.id.provider_check_status).visibility)
+            controller.pause().stop().destroy()
+        } finally {
+            ShellServices.install(services)
+        }
     }
 
     @Test fun systemBarsInsetBothListAndFloatingAddButtonWithoutAccumulating() {

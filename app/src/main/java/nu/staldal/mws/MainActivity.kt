@@ -231,7 +231,8 @@ class MainActivity : AppCompatActivity() {
             if (!failed) confirmImport()
             compatibilityEntry.visibility = if (compatibility.current().compatible) View.GONE else View.VISIBLE
             if (!failed) {
-                delay(3_000)
+                val remaining = ShellServices.shared(this@MainActivity).checkMessageRemainingMillis()
+                if (remaining > 0) delay(remaining)
                 progress.visibility = View.GONE
             }
         }

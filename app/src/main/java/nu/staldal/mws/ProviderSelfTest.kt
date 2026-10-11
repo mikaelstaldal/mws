@@ -52,11 +52,12 @@ internal class ProviderSelfTestRunner(
     private val store: MaintenanceStore,
     private val probes: List<ProviderProbe>,
 ) {
-    suspend fun runIfNeeded() {
+    /** Returns true only when a fresh suite completes and its results are saved. */
+    suspend fun runIfNeeded(): Boolean {
         val snapshot = source.snapshot()
-        val key = snapshot.key ?: return
-        if (SelfTestEncoding.decode(key, withContext(Dispatchers.IO) { store.selfTest() }) != null) return
-        if (!snapshot.multiProfile) return
+        val key = snapshot.key ?: return false
+        if (SelfTestEncoding.decode(key, withContext(Dispatchers.IO) { store.selfTest() }) != null) return false
+        if (!snapshot.multiProfile) return false
         val results = mutableMapOf<String, Boolean>()
         var incomplete = false
         for (probe in probes) {
@@ -71,13 +72,14 @@ internal class ProviderSelfTestRunner(
             }
         }
         // An exception or timeout did not establish provider behavior; retry on the next start.
-        if (incomplete) return
+        if (incomplete) return false
         // A provider may update while probes run. Never save results under the newer key.
-        if (source.snapshot() != snapshot) return
+        if (source.snapshot() != snapshot) return false
         results[SUITE_REVISION] = true
         withContext(Dispatchers.IO) {
             store.putSelfTest(RuntimeSelfTest(SelfTestEncoding.key(key), results))
         }
+        return true
     }
 }
 
