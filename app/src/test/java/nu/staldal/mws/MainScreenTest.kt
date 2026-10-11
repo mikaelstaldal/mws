@@ -343,6 +343,20 @@ class MainScreenTest {
         return activity.findViewById(R.id.app_rows)
     }
 
+    @Test fun confirmedImportIsSavedBeforeRefreshAndSurvivesActivityDestruction() {
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        await { activity.findViewById<View>(R.id.import_apps).isEnabled }
+        val imported = app("import-refresh", "Imported", 0)
+        MainActivity::class.java.getDeclaredMethod("importApps", List::class.java).apply {
+            isAccessible = true
+        }.invoke(activity, listOf(imported))
+        val repository = ConfigurationRepository(database)
+        await { runBlocking { repository.get(imported.id) } != null }
+        controller.pause().stop().destroy()
+        assertEquals(imported.name, runBlocking { repository.get(imported.id) }!!.name)
+    }
+
     private fun await(condition: () -> Boolean) {
         repeat(100) {
             org.robolectric.shadows.ShadowLooper.idleMainLooper()

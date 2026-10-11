@@ -134,14 +134,32 @@ class MainActivity : AppCompatActivity() {
 
     private fun importApps(apps: List<ConfiguredApp>) {
         lifecycleScope.launch {
+            val root = findViewById<FrameLayout>(android.R.id.content)
+            val overlay = LinearLayout(this@MainActivity).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                setBackgroundColor(android.graphics.Color.WHITE)
+                isClickable = true
+                addView(TextView(context).apply { setText(R.string.editor_discovery_loading) })
+            }
+            val status = overlay.getChildAt(0) as TextView
+            val refreshJob = coroutineContext[Job]
+            overlay.addView(android.widget.Button(this@MainActivity).apply {
+                setText(android.R.string.cancel)
+                setOnClickListener { refreshJob?.cancel() }
+            })
+            val host = FrameLayout(this@MainActivity)
+            overlay.addView(host, LinearLayout.LayoutParams(-1,
+                (96 * resources.displayMetrics.density).toInt()))
+            root.addView(overlay, FrameLayout.LayoutParams(-1, -1))
             try {
-                ShellServices.shared(this@MainActivity).awaitStartup()
+                val confirmed = apps.map { app ->
+                    val consent = listOfNotNull(app.configuredUrl, app.finalUrl, app.launchUrl)
+                        .fold(SensitiveUrlConsent.NONE) { consent, url -> consent.grant(url) }
+                    app.copy(sensitiveUrlConsent = consent.serialize())
+                }
                 val result = withContext(NonCancellable) {
-                    val confirmed = apps.map { app ->
-                        val consent = listOfNotNull(app.configuredUrl, app.finalUrl, app.launchUrl)
-                            .fold(SensitiveUrlConsent.NONE) { consent, url -> consent.grant(url) }
-                        app.copy(sensitiveUrlConsent = consent.serialize())
-                    }
+                    ShellServices.shared(this@MainActivity).awaitStartup()
                     repository.importApps(confirmed).also {
                         if (it == ConfigurationWriteResult.Success) withContext(Dispatchers.IO) {
                             MultiWidget.refresh(applicationContext)
@@ -151,9 +169,32 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (result == ConfigurationWriteResult.Success) {
                     Toast.makeText(this@MainActivity, R.string.import_complete, Toast.LENGTH_LONG).show()
+                    val refresh = ImportSiteRefresh(host, ShellServices.shared(this@MainActivity).profiles)
+                    confirmed.forEachIndexed { index, app ->
+                        status.text = getString(R.string.import_refresh_progress, index + 1, confirmed.size)
+                        val saved = repository.get(app.id) ?: return@forEachIndexed
+                        try {
+                            val refreshed = refresh.refresh(saved)
+                            withContext(NonCancellable) {
+                                if (repository.get(saved.id) == saved) repository.update(refreshed)
+                                withContext(Dispatchers.IO) {
+                                    MultiWidget.refresh(applicationContext)
+                                    SingleWidget.refresh(applicationContext)
+                                }
+                            }
+                        } catch (cancelled: CancellationException) { throw cancelled }
+                        catch (_: Exception) { /* One unavailable site must not stop the other refreshes. */ }
+                        finally {
+                            withContext(NonCancellable) {
+                                val retained = repository.get(saved.id)?.iconReference
+                                withContext(Dispatchers.IO) { iconStore.prune(saved.id, retained) }
+                            }
+                        }
+                    }
                 } else transferFailed()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { transferFailed() }
+            finally { root.removeView(overlay) }
         }
     }
 
