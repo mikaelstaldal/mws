@@ -286,7 +286,12 @@ class EditorActivity : AppCompatActivity() {
         }
         column.addView(clearingNotice)
 
-        urlField = TextInputEditText(this).apply {
+        urlLayout = (layoutInflater.inflate(R.layout.editor_text_field, column, false) as TextInputLayout).apply {
+            id = R.id.editor_url_layout
+            hint = getString(R.string.editor_url)
+            helperText = getString(R.string.editor_url_helper)
+        }
+        urlField = (urlLayout.editText as TextInputEditText).apply {
             id = R.id.editor_url
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_URI
             imeOptions = EditorInfo.IME_ACTION_NEXT
@@ -294,12 +299,6 @@ class EditorActivity : AppCompatActivity() {
             // Drop the platform's default single-line length cap: a truncated paste would be a
             // different URL, while overlong input must fail validation instead.
             filters = arrayOf()
-        }
-        urlLayout = TextInputLayout(this).apply {
-            id = R.id.editor_url_layout
-            hint = getString(R.string.editor_url)
-            helperText = getString(R.string.editor_url_helper)
-            addView(urlField)
         }
         urlField.minHeight = kotlin.math.ceil(48 * density).toInt()
         column.addView(urlLayout)
@@ -337,16 +336,15 @@ class EditorActivity : AppCompatActivity() {
             }
         }
         column.addView(useRedirectedUrlButton)
-        nameField = TextInputEditText(this).apply {
+        nameLayout = (layoutInflater.inflate(R.layout.editor_text_field, column, false) as TextInputLayout).apply {
+            id = R.id.editor_name_layout
+            hint = getString(R.string.editor_name)
+        }
+        nameField = (nameLayout.editText as TextInputEditText).apply {
             id = R.id.editor_name
             inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_WORDS
             imeOptions = EditorInfo.IME_ACTION_DONE
             isSingleLine = true
-        }
-        nameLayout = TextInputLayout(this).apply {
-            id = R.id.editor_name_layout
-            hint = getString(R.string.editor_name)
-            addView(nameField)
         }
         nameField.minHeight = kotlin.math.ceil(48 * density).toInt()
         column.addView(nameLayout)
