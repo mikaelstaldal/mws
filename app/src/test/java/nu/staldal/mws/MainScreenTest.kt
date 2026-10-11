@@ -35,6 +35,32 @@ class MainScreenTest {
         repository.ordered().forEach { repository.remove(it.id) }
     }
 
+    @Test fun startupDisablesConfigurationUntilCheckCompletes() {
+        val services = ShellServices.shared(context)
+        val checked = kotlinx.coroutines.CompletableDeferred<Unit>()
+        ShellServices.install(ShellServices(services.repository, services.compatibility,
+            services.shells, services.profiles, services.icons, selfTest = { checked.await() }))
+        val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val activity = controller.get()
+        val controls = listOf(R.id.add_web_app, R.id.empty_add, R.id.import_apps,
+            R.id.quick_launch, R.id.quick_url, R.id.reorder_apps)
+        controls.forEach { assertFalse(activity.findViewById<View>(it).isEnabled) }
+        assertEquals(activity.getString(R.string.provider_self_test_running),
+            activity.findViewById<TextView>(R.id.provider_check_status).text.toString())
+        activity.findViewById<View>(R.id.add_web_app).performClick()
+        activity.findViewById<View>(R.id.import_apps).performClick()
+        assertNull(Shadows.shadowOf(activity).nextStartedActivity)
+        controller.pause().resume()
+        controls.forEach { assertFalse(activity.findViewById<View>(it).isEnabled) }
+        checked.complete(Unit)
+        await { activity.findViewById<View>(R.id.add_web_app).isEnabled }
+        controls.forEach { assertTrue(activity.findViewById<View>(it).isEnabled) }
+        assertEquals(activity.getString(R.string.provider_check_complete),
+            activity.findViewById<TextView>(R.id.provider_check_status).text.toString())
+        controller.pause().stop().destroy()
+        ShellServices.install(services)
+    }
+
     @Test fun systemBarsInsetBothListAndFloatingAddButtonWithoutAccumulating() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
@@ -66,6 +92,7 @@ class MainScreenTest {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
         await { activity.findViewById<View>(R.id.empty_state).visibility == View.VISIBLE }
+        await { activity.findViewById<View>(R.id.add_web_app).isEnabled }
         assertEquals("Add web app", activity.findViewById<TextView>(R.id.empty_add).text.toString())
         activity.findViewById<View>(R.id.empty_add).performClick()
         val next = Shadows.shadowOf(activity).nextStartedActivity
@@ -80,6 +107,7 @@ class MainScreenTest {
     @Test fun transferControlsOpenDocumentPickersAndWarnBeforeExport() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
+        await { activity.findViewById<View>(R.id.import_apps).isEnabled }
         activity.findViewById<View>(R.id.import_apps).performClick()
         val opened = Shadows.shadowOf(activity).nextStartedActivity
         assertEquals(android.content.Intent.ACTION_OPEN_DOCUMENT, opened.action)
@@ -101,9 +129,13 @@ class MainScreenTest {
         val state = androidx.lifecycle.ViewModelProvider(controller.get())[ConfigurationTransferState::class.java]
         state.pending = listOf(app("imported", "Imported", 0))
         controller.recreate()
+        await { controller.get().findViewById<View>(R.id.import_apps).isEnabled }
         val dialog = org.robolectric.shadows.ShadowDialog.getLatestDialog() as androidx.appcompat.app.AlertDialog
         assertTrue(dialog.isShowing)
         assertTrue(dialog.findViewById<TextView>(android.R.id.message)!!.text.contains("Add 1 apps"))
+        controller.pause().resume()
+        await { controller.get().findViewById<View>(R.id.import_apps).isEnabled }
+        assertSame(dialog, org.robolectric.shadows.ShadowDialog.getLatestDialog())
         dialog.getButton(android.content.DialogInterface.BUTTON_NEGATIVE).performClick()
         Shadows.shadowOf(android.os.Looper.getMainLooper()).idle()
         assertNull(state.pending)
@@ -129,6 +161,7 @@ class MainScreenTest {
     @Test fun quickLaunchValidatesAndOpensWithoutAddingAnApp() {
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
+        await { activity.findViewById<View>(R.id.quick_launch).isEnabled }
         val key = ProviderKey("test.webview", "1.0", 31, "x86")
         org.robolectric.util.ReflectionHelpers.setField(activity, "compatibility",
             ProviderCompatibility({ ProviderSnapshot(key, true) },
@@ -155,9 +188,10 @@ class MainScreenTest {
         }
         val controller = Robolectric.buildActivity(MainActivity::class.java).setup()
         val activity = controller.get()
-        assertEquals(View.GONE, activity.findViewById<View>(R.id.empty_state).visibility)
         val rows = rows(activity)
         await { rows.childCount == 2 }
+        await { activity.findViewById<View>(R.id.add_web_app).isEnabled }
+        assertEquals(View.GONE, activity.findViewById<View>(R.id.empty_state).visibility)
         assertEquals("first", rows.getChildAt(0).tag)
         assertEquals("second", rows.getChildAt(1).tag)
         val first = rows.getChildAt(0)

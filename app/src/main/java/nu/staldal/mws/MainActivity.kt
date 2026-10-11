@@ -53,6 +53,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var quickLaunch: View
     private lateinit var quickUrlInput: View
     private var quickLaunching = false
+    private var importConfirmation: androidx.appcompat.app.AlertDialog? = null
+    private var startupReady = false
+    private var startupCheck: Job? = null
 
 
     private val transferState by lazy {
@@ -106,8 +109,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun confirmImport() {
+        if (!startupReady || importConfirmation?.isShowing == true) return
         val apps = transferState.pending ?: return
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle(R.string.import_apps)
             .setMessage(getString(R.string.import_confirmation, apps.size))
             .setOnCancelListener { transferState.pending = null }
@@ -116,7 +120,12 @@ class MainActivity : AppCompatActivity() {
                 transferState.pending = null
                 importApps(apps)
             }
-            .show()
+            .create()
+        importConfirmation = dialog
+        dialog.setOnDismissListener {
+            if (importConfirmation === dialog) importConfirmation = null
+        }
+        dialog.show()
     }
 
     private fun transferFailed() {
@@ -165,17 +174,19 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         quickLaunching = false
-        quickLaunch.isEnabled = true
+        setStartupReady(false)
         compatibilityEntry.visibility = View.GONE
-        lifecycleScope.launch {
+        startupCheck?.cancel()
+        startupCheck = lifecycleScope.launch {
             progress.setText(R.string.provider_self_test_running)
             progress.visibility = View.VISIBLE
             var failed = false
             try { ShellServices.shared(this@MainActivity).awaitStartup() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { failed = true }
-            progress.visibility = if (failed) View.VISIBLE else View.GONE
-            if (failed) progress.setText(R.string.provider_check_failed)
+            progress.setText(if (failed) R.string.provider_check_failed else R.string.provider_check_complete)
+            setStartupReady(!failed)
+            if (!failed) confirmImport()
             compatibilityEntry.visibility = if (compatibility.current().compatible) View.GONE else View.VISIBLE
         }
         observation = lifecycleScope.launch {
@@ -202,6 +213,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onPause() {
+        startupCheck?.cancel()
+        startupCheck = null
         observation?.cancel()
         observation = null
         super.onPause()
@@ -245,6 +258,13 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 0, 0, dp(12))
         }
         column.addView(heading)
+        progress = TextView(this).apply {
+            id = R.id.provider_check_status
+            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
+            setText(R.string.provider_self_test_running)
+            visibility = View.VISIBLE
+        }
+        column.addView(progress)
         val urlInput = EditText(this).apply {
             id = R.id.quick_url
             minimumHeight = kotlin.math.ceil(48 * density).toInt()
@@ -260,7 +280,7 @@ class MainActivity : AppCompatActivity() {
             id = R.id.quick_launch
             setText(R.string.quick_launch)
             setOnClickListener {
-                if (quickLaunching) return@setOnClickListener
+                if (!startupReady || quickLaunching) return@setOnClickListener
                 val validation = UrlPolicy.validateUserInput(urlInput.text.toString())
                 if (validation !is UrlPolicy.UserInput.Valid) {
                     urlInput.error = getString(when (validation) {
@@ -295,6 +315,7 @@ class MainActivity : AppCompatActivity() {
                 controls.addView(this)
             }
         reorder = button(R.id.reorder_apps, R.string.reorder_apps) {
+            if (!startupReady) return@button
             draft = currentApps.map { it.id }.toMutableList()
             rows.removeAllViews()
             renderDisplayed()
@@ -302,7 +323,7 @@ class MainActivity : AppCompatActivity() {
         done = button(R.id.reorder_done, R.string.reorder_done) { saveOrder() }
         cancel = button(R.id.reorder_cancel, R.string.reorder_cancel) { cancelOrder() }
         button(R.id.import_apps, R.string.import_apps) {
-            if (draft == null) importDocument.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
+            if (startupReady && draft == null) importDocument.launch(arrayOf("application/json", "text/plain", "application/octet-stream"))
         }
         button(R.id.export_apps, R.string.export_apps) {
             if (draft == null) androidx.appcompat.app.AlertDialog.Builder(this)
@@ -325,12 +346,6 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener { startActivity(Intent(this@MainActivity, ProviderErrorActivity::class.java)) }
         }
         column.addView(compatibilityEntry)
-        progress = TextView(this).apply {
-            accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
-            setText(R.string.provider_self_test_running)
-            visibility = View.GONE
-        }
-        column.addView(progress)
         listError = TextView(this).apply {
             accessibilityLiveRegion = View.ACCESSIBILITY_LIVE_REGION_POLITE
             id = R.id.list_error
@@ -355,7 +370,7 @@ class MainActivity : AppCompatActivity() {
             addView(com.google.android.material.button.MaterialButton(this@MainActivity).apply {
                 id = R.id.empty_add
                 setText(R.string.add_web_app)
-                setOnClickListener { startActivity(EditorActivity.addIntent(this@MainActivity)) }
+                setOnClickListener { if (startupReady) startActivity(EditorActivity.addIntent(this@MainActivity)) }
             })
         }
         column.addView(emptyState, LinearLayout.LayoutParams(-1, 0, 1f))
@@ -364,7 +379,7 @@ class MainActivity : AppCompatActivity() {
             setText(R.string.add_web_app)
             setIconResource(android.R.drawable.ic_input_add)
             contentDescription = getString(R.string.add_web_app)
-            setOnClickListener { startActivity(EditorActivity.addIntent(this@MainActivity)) }
+            setOnClickListener { if (startupReady) startActivity(EditorActivity.addIntent(this@MainActivity)) }
         }
         addButton = add
         root.addView(add, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.END).apply {
@@ -373,6 +388,17 @@ class MainActivity : AppCompatActivity() {
         setContentView(root)
         ViewCompat.requestApplyInsets(root)
         renderDisplayed()
+        setStartupReady(false)
+    }
+
+    private fun setStartupReady(ready: Boolean) {
+        startupReady = ready
+        for (id in listOf(R.id.add_web_app, R.id.empty_add, R.id.import_apps,
+            R.id.quick_launch, R.id.quick_url, R.id.reorder_apps)) {
+            findViewById<View>(id).isEnabled = ready
+        }
+        done.isEnabled = ready && !saving
+        cancel.isEnabled = ready && !saving
     }
 
     private fun renderDisplayed() {
@@ -383,8 +409,8 @@ class MainActivity : AppCompatActivity() {
         cancel.visibility = done.visibility
         findViewById<View>(R.id.import_apps).visibility = if (editing) View.GONE else View.VISIBLE
         findViewById<View>(R.id.export_apps).visibility = if (editing) View.GONE else View.VISIBLE
-        done.isEnabled = !saving
-        cancel.isEnabled = !saving
+        done.isEnabled = startupReady && !saving
+        cancel.isEnabled = startupReady && !saving
         addButton.visibility = if (editing) View.GONE else View.VISIBLE
         quickLaunch.visibility = if (editing) View.GONE else View.VISIBLE
         quickUrlInput.visibility = quickLaunch.visibility
@@ -402,7 +428,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun saveOrder() {
         val ids = draft?.toList() ?: return
-        if (saving) return
+        if (!startupReady || saving) return
         saving = true
         renderDisplayed()
         lifecycleScope.launch {
@@ -475,7 +501,7 @@ class MainActivity : AppCompatActivity() {
             isClickable = draft == null
             isFocusable = true
             setOnClickListener {
-                if (draft != null) return@setOnClickListener
+                if (!startupReady || draft != null) return@setOnClickListener
                 if (clearing) Toast.makeText(this@MainActivity,
                     R.string.clearing_explanation, Toast.LENGTH_LONG).show()
                 else if (!compatibility.current().compatible) {
@@ -483,7 +509,7 @@ class MainActivity : AppCompatActivity() {
                 } else startActivity(ShellActivity.intent(this@MainActivity, app.id))
             }
             setOnLongClickListener {
-                if (draft != null) return@setOnLongClickListener true
+                if (!startupReady || draft != null) return@setOnLongClickListener true
                 startActivity(EditorActivity.editIntent(this@MainActivity, app.id))
                 true
             }

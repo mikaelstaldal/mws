@@ -68,6 +68,7 @@
     <string name="provider_reason_self_test_pending">The compatibility self-test has not completed for this provider. Restart the app to run it again.</string>
     <string name="provider_reason_isolation_failed">The compatibility self-test found that app data is not isolated between profiles. Update this provider in your app store or Android settings, then return here.</string>
     <string name="provider_reason_deletion_failed">The compatibility self-test found that profile data cannot be reliably deleted. Update this provider in your app store or Android settings, then return here.</string>
+    <string name="provider_check_complete">WebView check complete.</string>
     <string name="provider_self_test_running">Checking WebView compatibility… Web apps are unavailable until this check finishes.</string>
     <string name="provider_check_failed">Could not check WebView compatibility. Restart the app to retry.</string>
     <string name="provider_settings">Open WebView provider settings</string>
