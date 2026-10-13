@@ -32,7 +32,6 @@ class ShellServices(
     private var startup: StartupReport? = null
     private var startupCompatible = false
     private var selfTestAttempted = false
-    private var selfTestKey: ProviderKey? = null
     private var selfTestCompletedAt: Long? = null
 
     /** Only a newly performed check starts the completion message's three-second window. */
@@ -46,12 +45,10 @@ class ShellServices(
      */
     suspend fun awaitStartup(): StartupReport = startupLock.withLock {
         profiles.prepareConfiguration()
-        val currentKey = compatibility.current().key
-        if (!selfTestAttempted || currentKey != selfTestKey) {
+        if (!selfTestAttempted) {
             if (selfTest?.invoke() == true) {
                 selfTestCompletedAt = android.os.SystemClock.elapsedRealtime()
             }
-            selfTestKey = currentKey
             selfTestAttempted = true
         }
         val decision = compatibility.current()

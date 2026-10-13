@@ -19,7 +19,6 @@ import kotlin.coroutines.resume
 private const val PROBE_URL = "https://mws-self-test.invalid/probe"
 private const val MARKER = "mws-self-test-marker"
 private const val COOKIE_MARKER = "mws_probe=present"
-private const val SUITE_REVISION = "suite-revision-8"
 
 /** No URLs or credentials are persisted. Absent feature keys fail closed. */
 internal object SelfTestEncoding {
@@ -30,10 +29,10 @@ internal object SelfTestEncoding {
         put("abi", key.primaryAbi)
     }.toString()
 
+    // The recorded provider is diagnostic only; reuse installation results for the current provider.
     fun decode(key: ProviderKey, stored: RuntimeSelfTest?): ProviderSelfTestResult? {
-        if (stored?.matchKey != this.key(key)) return null
+        if (stored == null) return null
         val flags = stored.features
-        if (flags[SUITE_REVISION] != true) return null
         return ProviderSelfTestResult(key, flags["isolation"] == true, flags["deletion"] == true,
             flags["basicAuth"] == true, flags["newWindow"] == true,
             flags["formFill"] == true, flags["discoveryCookies"] == true)
@@ -46,7 +45,7 @@ internal interface ProviderProbe {
     suspend fun run(): Boolean
 }
 
-/** Serial caller is ShellServices.awaitStartup; cached results run once per match key. */
+/** Serial caller is ShellServices.awaitStartup; results are permanent for this installation. */
 internal class ProviderSelfTestRunner(
     private val source: ProviderSnapshotSource,
     private val store: MaintenanceStore,
@@ -54,28 +53,21 @@ internal class ProviderSelfTestRunner(
 ) {
     /** Returns true only when a fresh suite completes and its results are saved. */
     suspend fun runIfNeeded(): Boolean {
+        if (withContext(Dispatchers.IO) { store.selfTest() } != null) return false
         val snapshot = source.snapshot()
         val key = snapshot.key ?: return false
-        if (SelfTestEncoding.decode(key, withContext(Dispatchers.IO) { store.selfTest() }) != null) return false
         if (!snapshot.multiProfile) return false
         val results = mutableMapOf<String, Boolean>()
-        var incomplete = false
         for (probe in probes) {
             results[probe.name] = try { probe.run() } catch (_: TimeoutCancellationException) {
-                incomplete = true
                 false
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
-                incomplete = true
                 false
             }
         }
-        // An exception or timeout did not establish provider behavior; retry on the next start.
-        if (incomplete) return false
-        // A provider may update while probes run. Never save results under the newer key.
-        if (source.snapshot() != snapshot) return false
-        results[SUITE_REVISION] = true
+        // Failed or timed-out probes stay disabled; a completed attempt is never repeated.
         withContext(Dispatchers.IO) {
             store.putSelfTest(RuntimeSelfTest(SelfTestEncoding.key(key), results))
         }

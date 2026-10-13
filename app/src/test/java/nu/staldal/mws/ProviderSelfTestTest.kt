@@ -60,7 +60,7 @@ class ProviderSelfTestTest {
         }
     }
 
-    @Test fun firstStartAndKeyChangeRunOnceAndLeaveOptionalFeaturesDisabled() = runBlocking {
+    @Test fun firstStartRunsOnceAndProviderChangesReuseSavedResult() = runBlocking {
         val key = ProviderKey("provider", "1.2", 35, "arm64")
         var snapshot = ProviderSnapshot(key, true)
         var isolationRuns = 0
@@ -87,10 +87,33 @@ class ProviderSelfTestTest {
             assertFalse(result.newWindowRouting)
             assertFalse(result.formFill)
             snapshot = ProviderSnapshot(key.copy(version = "1.3"), true)
-            assertNull(SelfTestEncoding.decode(snapshot.key!!, store.selfTest()))
-            assertTrue(runner.runIfNeeded())
-            assertEquals(2, isolationRuns)
-            assertEquals(2, deletionRuns)
+            assertTrue(SelfTestEncoding.decode(snapshot.key!!, store.selfTest())!!.profileIsolation)
+            assertFalse(runner.runIfNeeded())
+            assertEquals(1, isolationRuns)
+            assertEquals(1, deletionRuns)
+        }
+    }
+
+    @Test fun savedResultSurvivesDatabaseReopenAndEnvironmentChanges() = runBlocking {
+        val original = ProviderKey("provider", "1.2", 31, "arm64")
+        MaintenanceStore(context).use { store ->
+            store.putSelfTest(RuntimeSelfTest(SelfTestEncoding.key(original),
+                mapOf("isolation" to true, "deletion" to true, "basicAuth" to false)))
+        }
+        val updated = ProviderKey("other.provider", "2.0", 35, "x86_64")
+        MaintenanceStore(context).use { store ->
+            val runner = ProviderSelfTestRunner({ ProviderSnapshot(updated, true) }, store,
+                listOf(object : ProviderProbe {
+                    override val name = "isolation"
+                    override suspend fun run(): Boolean = error("saved result must prevent probes")
+                }))
+            assertFalse(runner.runIfNeeded())
+            val gate = ProviderCompatibility({ ProviderSnapshot(updated, true) },
+                { requested -> SelfTestEncoding.decode(requested, store.selfTest()) },
+                mapOf(updated.packageName to listOf(1)))
+            assertTrue(gate.current().compatible)
+            assertFalse(gate.current().features.basicAuth)
+            assertEquals(SelfTestEncoding.key(original), store.selfTest()!!.matchKey)
         }
     }
 
@@ -117,7 +140,7 @@ class ProviderSelfTestTest {
         }
     }
 
-    @Test fun probeExceptionLeavesResultPendingForRetry() = runBlocking {
+    @Test fun probeExceptionIsSavedAndNeverRetried() = runBlocking {
         val key = ProviderKey("provider", "1.2", 35, "arm64")
         var attempts = 0
         MaintenanceStore(context).use { store ->
@@ -131,14 +154,13 @@ class ProviderSelfTestTest {
                     }
                 }))
             runner.runIfNeeded()
-            assertNull(store.selfTest())
-            runner.runIfNeeded()
-            assertEquals(2, attempts)
-            assertTrue(SelfTestEncoding.decode(key, store.selfTest())!!.profileIsolation)
+            assertFalse(SelfTestEncoding.decode(key, store.selfTest())!!.profileIsolation)
+            assertFalse(runner.runIfNeeded())
+            assertEquals(1, attempts)
         }
     }
 
-    @Test fun probeTimeoutLeavesResultPendingForRetry() = runBlocking {
+    @Test fun probeTimeoutIsSavedAsFailure() = runBlocking {
         val key = ProviderKey("provider", "1.2", 35, "arm64")
         MaintenanceStore(context).use { store ->
             ProviderSelfTestRunner({ ProviderSnapshot(key, true) }, store,
@@ -149,7 +171,7 @@ class ProviderSelfTestTest {
                         true
                     }
                 })).runIfNeeded()
-            assertNull(store.selfTest())
+            assertFalse(SelfTestEncoding.decode(key, store.selfTest())!!.profileDeletion)
         }
     }
 
@@ -165,20 +187,20 @@ class ProviderSelfTestTest {
         }
     }
 
-    @Test fun olderProbeSuiteResultIsRerunForTheSameProviderKey() = runBlocking {
+    @Test fun olderProbeSuiteResultIsReused() = runBlocking {
         val key = ProviderKey("provider", "1.2", 35, "arm64")
         MaintenanceStore(context).use { store ->
             store.putSelfTest(RuntimeSelfTest(SelfTestEncoding.key(key),
                 mapOf("isolation" to true, "deletion" to false)))
-            assertNull(SelfTestEncoding.decode(key, store.selfTest()))
+            assertFalse(SelfTestEncoding.decode(key, store.selfTest())!!.profileDeletion)
             var runs = 0
             ProviderSelfTestRunner({ ProviderSnapshot(key, true) }, store,
                 listOf(object : ProviderProbe {
                     override val name = "deletion"
                     override suspend fun run(): Boolean { runs++; return true }
                 })).runIfNeeded()
-            assertEquals(1, runs)
-            assertTrue(SelfTestEncoding.decode(key, store.selfTest())!!.profileDeletion)
+            assertEquals(0, runs)
+            assertFalse(SelfTestEncoding.decode(key, store.selfTest())!!.profileDeletion)
         }
     }
 }

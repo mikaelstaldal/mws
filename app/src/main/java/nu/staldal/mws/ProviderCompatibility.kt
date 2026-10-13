@@ -5,7 +5,7 @@ import android.os.Build
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
 
-/** The key invalidates a self-test whenever the provider or device environment changes. */
+/** Identifies the current WebView provider and device environment. */
 data class ProviderKey(
     val packageName: String,
     val version: String,
@@ -13,7 +13,7 @@ data class ProviderKey(
     val primaryAbi: String,
 )
 
-/** Supplied by the runtime self-test. A missing or stale result always fails closed. */
+/** Supplied by the installation self-test. A missing result always fails closed. */
 data class ProviderSelfTestResult(
     val key: ProviderKey,
     val profileIsolation: Boolean,
